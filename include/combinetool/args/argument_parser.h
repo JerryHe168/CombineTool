@@ -75,6 +75,9 @@ public:
     static DeduplicationMode parseDeduplicationMode(const std::string& mode);
     static DeduplicationKeepStrategy parseKeepStrategy(const std::string& strategy);
     
+    static TimestampFormat parseTimestampFormat(const std::string& format);
+    static FileType parseFileType(const std::string& type);
+    
     static std::vector<std::string> expandInputFiles(
         const std::vector<std::string>& inputs,
         bool recursive,

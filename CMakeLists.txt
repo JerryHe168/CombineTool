@@ -17,6 +17,7 @@ set(SOURCES
     src/utils/string_utils.cpp
     src/utils/file_utils.cpp
     src/utils/path_utils.cpp
+    src/utils/timestamp_extractor.cpp
     src/encoding/encoding_detector.cpp
     src/encoding/encoding_converter.cpp
     src/format/format_detector.cpp
@@ -25,8 +26,11 @@ set(SOURCES
     src/merge/sequential_merger.cpp
     src/merge/interleaved_merger.cpp
     src/merge/conditional_merger.cpp
+    src/merge/timestamp_sorted_merger.cpp
+    src/merge/binary_merger.cpp
     src/io/stream_reader.cpp
     src/io/mapped_file_reader.cpp
+    src/io/smart_file_reader.cpp
     src/io/stream_writer.cpp
     src/args/argument_parser.cpp
 )
@@ -35,6 +39,7 @@ set(HEADERS
     include/combinetool/utils/string_utils.h
     include/combinetool/utils/file_utils.h
     include/combinetool/utils/path_utils.h
+    include/combinetool/utils/timestamp_extractor.h
     include/combinetool/encoding/encoding_detector.h
     include/combinetool/encoding/encoding_converter.h
     include/combinetool/format/format_detector.h
@@ -43,8 +48,11 @@ set(HEADERS
     include/combinetool/merge/sequential_merger.h
     include/combinetool/merge/interleaved_merger.h
     include/combinetool/merge/conditional_merger.h
+    include/combinetool/merge/timestamp_sorted_merger.h
+    include/combinetool/merge/binary_merger.h
     include/combinetool/io/stream_reader.h
     include/combinetool/io/mapped_file_reader.h
+    include/combinetool/io/smart_file_reader.h
     include/combinetool/io/stream_writer.h
     include/combinetool/args/argument_parser.h
     include/combinetool/types.h

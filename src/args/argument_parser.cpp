@@ -299,6 +299,20 @@ MergeConfig ConfigBuilder::buildFromArgs(const ParseResult& result) {
     config.deduplicationConfig.endColumn = config::DEFAULT_END_COLUMN;
     config.deduplicationConfig.caseSensitive = config::DEFAULT_CASE_SENSITIVE;
     
+    config.timestampConfig.format = TimestampFormat::Auto;
+    config.timestampConfig.customPattern = "";
+    config.timestampConfig.extractColumn = static_cast<size_t>(-1);
+    config.timestampConfig.columnDelimiter = ",";
+    
+    config.smartIOConfig.useSmartIO = config::DEFAULT_USE_SMART_IO;
+    config.smartIOConfig.memoryMapThreshold = config::DEFAULT_MEMORY_MAP_THRESHOLD;
+    config.smartIOConfig.streamBufferSize = config::DEFAULT_BUFFER_SIZE;
+    
+    config.binaryConfig.inputFileType = FileType::AutoDetect;
+    config.binaryConfig.outputFileType = FileType::AutoDetect;
+    config.binaryConfig.chunkSize = config::DEFAULT_BINARY_CHUNK_SIZE;
+    config.binaryConfig.preserveHeaders = true;
+    
     for (const auto& kv : result.namedArgs) {
         const auto& key = kv.first;
         const auto& value = kv.second;
@@ -353,6 +367,23 @@ MergeConfig ConfigBuilder::buildFromArgs(const ParseResult& result) {
             config.outputHeader = false;
         } else if (key == "buffer-size" || key == "b") {
             config.bufferSize = static_cast<size_t>(std::stoull(value));
+        } else if (key == "timestamp-format") {
+            config.timestampConfig.format = parseTimestampFormat(value);
+        } else if (key == "timestamp-pattern") {
+            config.timestampConfig.customPattern = value;
+        } else if (key == "timestamp-column") {
+            config.timestampConfig.extractColumn = static_cast<size_t>(std::stoull(value));
+        } else if (key == "timestamp-delimiter") {
+            config.timestampConfig.columnDelimiter = value;
+        } else if (key == "smart-io") {
+            config.smartIOConfig.useSmartIO = (value == "true" || value == "1" || value == "yes" || value.empty());
+        } else if (key == "mmap-threshold") {
+            config.smartIOConfig.memoryMapThreshold = static_cast<uint64_t>(std::stoull(value));
+        } else if (key == "binary-chunk") {
+            config.binaryConfig.chunkSize = static_cast<size_t>(std::stoull(value));
+        } else if (key == "file-type") {
+            config.binaryConfig.inputFileType = parseFileType(value);
+            config.binaryConfig.outputFileType = parseFileType(value);
         }
     }
     
@@ -370,6 +401,8 @@ MergeConfig ConfigBuilder::buildFromArgs(const ParseResult& result) {
             config.filterConfig.filterCommentLines = true;
         } else if (flag == "no-header") {
             config.outputHeader = false;
+        } else if (flag == "smart-io") {
+            config.smartIOConfig.useSmartIO = true;
         }
     }
     
@@ -390,8 +423,52 @@ MergeMode ConfigBuilder::parseMergeMode(const std::string& mode) {
     if (lower == "conditional" || lower == "condition" || lower == "join" || lower == "c") {
         return MergeMode::Conditional;
     }
+    if (lower == "timestamp" || lower == "timestamp-sorted" || lower == "ts" || lower == "t") {
+        return MergeMode::TimestampSorted;
+    }
+    if (lower == "binary" || lower == "bin" || lower == "b") {
+        return MergeMode::Binary;
+    }
     
     return MergeMode::Sequential;
+}
+
+TimestampFormat ConfigBuilder::parseTimestampFormat(const std::string& format) {
+    std::string lower = utils::StringUtils::toLower(format);
+    
+    if (lower == "auto" || lower == "autodetect") {
+        return TimestampFormat::Auto;
+    }
+    if (lower == "iso8601" || lower == "iso-8601" || lower == "iso") {
+        return TimestampFormat::ISO8601;
+    }
+    if (lower == "rfc2822" || lower == "rfc-2822" || lower == "rfc") {
+        return TimestampFormat::RFC2822;
+    }
+    if (lower == "unix" || lower == "epoch" || lower == "timestamp") {
+        return TimestampFormat::UnixTimestamp;
+    }
+    if (lower == "custom" || lower == "pattern") {
+        return TimestampFormat::Custom;
+    }
+    
+    return TimestampFormat::Auto;
+}
+
+FileType ConfigBuilder::parseFileType(const std::string& type) {
+    std::string lower = utils::StringUtils::toLower(type);
+    
+    if (lower == "auto" || lower == "autodetect" || lower == "detect") {
+        return FileType::AutoDetect;
+    }
+    if (lower == "text" || lower == "txt" || lower == "ascii") {
+        return FileType::Text;
+    }
+    if (lower == "binary" || lower == "bin" || lower == "raw") {
+        return FileType::Binary;
+    }
+    
+    return FileType::AutoDetect;
 }
 
 Encoding ConfigBuilder::parseEncoding(const std::string& encoding) {
