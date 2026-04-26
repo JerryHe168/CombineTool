@@ -182,44 +182,47 @@ bool MappedFileReader::readLine(
     
     size_t start = offset;
     size_t end = start;
+    size_t fileSize = static_cast<size_t>(m_fileSize);
+    bool foundNewline = false;
+    bool hasCR = false;
+    bool hasLF = false;
     
-    while (end < static_cast<size_t>(m_fileSize)) {
+    while (end < fileSize) {
         if (data[end] == '\n') {
+            foundNewline = true;
+            hasLF = true;
             break;
         }
         if (data[end] == '\r') {
-            if (end + 1 < static_cast<size_t>(m_fileSize) && data[end + 1] == '\n') {
+            foundNewline = true;
+            hasCR = true;
+            if (end + 1 < fileSize && data[end + 1] == '\n') {
+                hasLF = true;
             }
             break;
         }
         ++end;
     }
     
-    if (start == end && end >= static_cast<size_t>(m_fileSize)) {
+    if (start == end && !foundNewline && end >= fileSize) {
         return false;
     }
     
     line.assign(data + start, end - start);
     
-    if (end < static_cast<size_t>(m_fileSize)) {
-        if (data[end] == '\r') {
-            if (end + 1 < static_cast<size_t>(m_fileSize) && data[end + 1] == '\n') {
-                end += 2;
-            } else {
-                end += 1;
-            }
+    if (foundNewline) {
+        if (hasCR && hasLF) {
+            end += 2;
         } else {
             end += 1;
         }
     }
     
-    if (keepNewline) {
-        if (data[start + line.size()] == '\r' || data[start + line.size()] == '\n') {
-            if (data[start + line.size()] == '\r') {
-                line += "\r\n";
-            } else {
-                line += "\n";
-            }
+    if (keepNewline && foundNewline) {
+        if (hasCR) {
+            line += "\r\n";
+        } else {
+            line += "\n";
         }
     }
     
@@ -252,12 +255,20 @@ void MappedFileReader::setProgressCallback(
 bool MappedFileReader::openFile() {
 #ifdef _WIN32
     std::wstring wPath;
-    for (char c : m_filePath) {
-        wPath += static_cast<wchar_t>(c);
+    if (!m_filePath.empty()) {
+        int size = MultiByteToWideChar(
+            CP_ACP, 0, m_filePath.c_str(), static_cast<int>(m_filePath.length()), nullptr, 0
+        );
+        if (size > 0) {
+            wPath.resize(size, 0);
+            MultiByteToWideChar(
+                CP_ACP, 0, m_filePath.c_str(), static_cast<int>(m_filePath.length()), &wPath[0], size
+            );
+        }
     }
     
     m_fileHandle = CreateFileW(
-        wPath.c_str(),
+        wPath.empty() ? nullptr : wPath.c_str(),
         GENERIC_READ,
         FILE_SHARE_READ,
         NULL,

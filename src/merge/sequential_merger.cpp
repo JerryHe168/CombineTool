@@ -158,7 +158,10 @@ bool SequentialMerger::writeLine(const std::string& line) {
         return false;
     }
     
-    *m_outputStream << line << '\n';
+    *m_outputStream << line;
+    if (!line.empty() && (line.back() != '\n' && line.back() != '\r')) {
+        *m_outputStream << '\n';
+    }
     m_totalLinesWritten++;
     
     return m_outputStream->good();

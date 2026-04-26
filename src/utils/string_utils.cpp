@@ -163,16 +163,7 @@ std::string StringUtils::replace(
     const std::string& from,
     const std::string& to
 ) {
-    if (from.empty()) {
-        return str;
-    }
-    
-    std::string result = str;
-    size_t pos = result.find(from);
-    if (pos != std::string::npos) {
-        result.replace(pos, from.length(), to);
-    }
-    return result;
+    return replaceAll(str, from, to);
 }
 
 std::string StringUtils::replaceAll(

@@ -60,46 +60,32 @@ ReadResult StreamReader::readLine(std::string& line, bool keepNewline) {
     }
     
     line.clear();
-    std::vector<char> tempBuffer(4096);
-    bool foundNewline = false;
+    size_t originalPosition = m_position;
     
-    while (!foundNewline && !m_stream->eof()) {
-        m_stream->getline(tempBuffer.data(), static_cast<std::streamsize>(tempBuffer.size()));
+    if (std::getline(*m_stream, line)) {
+        result.success = true;
+        result.bytesRead = line.size() + 1;
         
-        auto count = static_cast<size_t>(m_stream->gcount());
-        
-        if (count > 0) {
-            if (tempBuffer[count - 1] == '\0') {
-                --count;
-            }
-            line.append(tempBuffer.data(), count);
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
         }
         
-        if (m_stream->eof()) {
-            result.eof = true;
-            result.success = !line.empty() || m_position > 0;
-            result.bytesRead = line.size();
-            m_position += result.bytesRead;
-            updateProgress();
-            return result;
+        if (keepNewline) {
+            line += '\n';
         }
-        
-        if (m_stream->fail() && !m_stream->eof()) {
-            m_stream->clear();
-        } else {
-            foundNewline = true;
-            if (keepNewline) {
-                line += '\n';
-            }
-        }
+    } else if (m_stream->eof() && !line.empty()) {
+        result.success = true;
+        result.bytesRead = line.size();
+        result.eof = true;
+    } else if (m_stream->eof()) {
+        result.eof = true;
+        result.success = false;
     }
     
-    result.success = !line.empty() || !m_stream->eof();
-    result.bytesRead = line.size() + (foundNewline ? 1 : 0);
-    result.eof = m_stream->eof();
-    m_position += result.bytesRead;
-    
-    updateProgress();
+    if (result.success) {
+        m_position = originalPosition + result.bytesRead;
+        updateProgress();
+    }
     
     return result;
 }
