@@ -9,79 +9,6 @@
 namespace combinetool {
 namespace filter {
 
-Filter::Filter(const FilterConfig& config)
-    : m_config(config)
-{
-    compilePatterns();
-}
-
-bool Filter::shouldKeep(const LineData& line) const {
-    if (!line.isValid) {
-        return false;
-    }
-    
-    return shouldKeep(line.content);
-}
-
-bool Filter::shouldKeep(const std::string& content) const {
-    if (m_config.filterBlankLines && isBlankLine(content)) {
-        return false;
-    }
-    
-    if (m_config.filterCommentLines && isCommentLine(content)) {
-        return false;
-    }
-    
-    if (!m_config.includePatterns.empty() || !m_includeRegexes.empty()) {
-        if (!matchesInclude(content)) {
-            return false;
-        }
-    }
-    
-    if (!m_config.excludePatterns.empty() || !m_excludeRegexes.empty()) {
-        if (matchesExclude(content)) {
-            return false;
-        }
-    }
-    
-    if (m_config.customFilter) {
-        LineData dummy;
-        dummy.content = content;
-        dummy.isValid = true;
-        if (!m_config.customFilter(content)) {
-            return false;
-        }
-    }
-    
-    return true;
-}
-
-bool Filter::matchesInclude(const std::string& content) const {
-    return matchesPatterns(content, m_config.includePatterns, m_includeRegexes);
-}
-
-bool Filter::matchesExclude(const std::string& content) const {
-    return matchesPatterns(content, m_config.excludePatterns, m_excludeRegexes);
-}
-
-bool Filter::isBlankLine(const std::string& content) const {
-    return utils::StringUtils::isBlank(content);
-}
-
-bool Filter::isCommentLine(const std::string& content) const {
-    std::string trimmed = utils::StringUtils::trimLeft(content);
-    return utils::StringUtils::startsWith(trimmed, m_config.commentPrefix);
-}
-
-void Filter::setCustomFilter(std::function<bool(const LineData&)> customFilter) {
-    m_config.customFilter = [customFilter](const std::string& content) {
-        LineData line;
-        line.content = content;
-        line.isValid = true;
-        return customFilter(line);
-    };
-}
-
 namespace {
 std::string wildCardToRegex(const std::string& pattern) {
     std::string regex;
@@ -128,45 +55,199 @@ std::string wildCardToRegex(const std::string& pattern) {
     
     return regex;
 }
+
+void compilePatternsToShared(
+    const std::vector<std::string>& patterns,
+    std::vector<std::shared_ptr<std::regex>>& regexes,
+    bool caseSensitive
+) {
+    for (const auto& pattern : patterns) {
+        if (pattern.empty()) {
+            continue;
+        }
+        
+        std::string regexPattern;
+        if (pattern.find_first_of("*?[]") != std::string::npos) {
+            regexPattern = wildCardToRegex(pattern);
+        } else {
+            regexPattern = pattern;
+        }
+        
+        try {
+            auto flags = std::regex::ECMAScript;
+            if (!caseSensitive) {
+                flags |= std::regex::icase;
+            }
+            regexes.push_back(std::make_shared<std::regex>(regexPattern, flags));
+        } catch (const std::regex_error&) {
+        }
+    }
+}
+}
+
+bool RegexCache::CacheKey::operator==(const CacheKey& other) const {
+    return includePatterns == other.includePatterns &&
+           excludePatterns == other.excludePatterns &&
+           caseSensitive == other.caseSensitive;
+}
+
+size_t RegexCache::CacheKeyHash::operator()(const CacheKey& key) const {
+    size_t hash = 0;
+    
+    for (const auto& s : key.includePatterns) {
+        for (char c : s) {
+            hash = hash * 31 + static_cast<size_t>(c);
+        }
+        hash = hash * 31 + 271828;
+    }
+    
+    for (const auto& s : key.excludePatterns) {
+        for (char c : s) {
+            hash = hash * 31 + static_cast<size_t>(c);
+        }
+        hash = hash * 31 + 314159;
+    }
+    
+    hash = hash * 31 + (key.caseSensitive ? 1 : 0);
+    
+    return hash;
+}
+
+RegexCache& RegexCache::instance() {
+    static RegexCache instance;
+    return instance;
+}
+
+std::shared_ptr<RegexCache::CachedRegexes> RegexCache::getOrCreate(
+    const std::vector<std::string>& includePatterns,
+    const std::vector<std::string>& excludePatterns,
+    bool caseSensitive
+) {
+    CacheKey key;
+    key.includePatterns = includePatterns;
+    key.excludePatterns = excludePatterns;
+    key.caseSensitive = caseSensitive;
+    
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    auto it = m_cache.find(key);
+    if (it != m_cache.end()) {
+        return it->second;
+    }
+    
+    auto cached = std::make_shared<CachedRegexes>();
+    compilePatternsToShared(includePatterns, cached->includeRegexes, caseSensitive);
+    compilePatternsToShared(excludePatterns, cached->excludeRegexes, caseSensitive);
+    
+    m_cache[key] = cached;
+    return cached;
+}
+
+void RegexCache::clear() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_cache.clear();
+}
+
+Filter::Filter(const FilterConfig& config)
+    : m_config(config)
+{
+    compilePatterns();
+}
+
+bool Filter::shouldKeep(const LineData& line) const {
+    if (!line.isValid) {
+        return false;
+    }
+    
+    return shouldKeep(line.content);
+}
+
+bool Filter::shouldKeep(const std::string& content) const {
+    if (m_config.filterBlankLines && isBlankLine(content)) {
+        return false;
+    }
+    
+    if (m_config.filterCommentLines && isCommentLine(content)) {
+        return false;
+    }
+    
+    if (!m_config.includePatterns.empty() || 
+        (m_cachedRegexes && !m_cachedRegexes->includeRegexes.empty())) {
+        if (!matchesInclude(content)) {
+            return false;
+        }
+    }
+    
+    if (!m_config.excludePatterns.empty() || 
+        (m_cachedRegexes && !m_cachedRegexes->excludeRegexes.empty())) {
+        if (matchesExclude(content)) {
+            return false;
+        }
+    }
+    
+    if (m_config.customFilter) {
+        LineData dummy;
+        dummy.content = content;
+        dummy.isValid = true;
+        if (!m_config.customFilter(content)) {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+bool Filter::matchesInclude(const std::string& content) const {
+    return matchesPatterns(
+        content, 
+        m_config.includePatterns, 
+        m_cachedRegexes ? m_cachedRegexes->includeRegexes 
+                        : std::vector<std::shared_ptr<std::regex>>()
+    );
+}
+
+bool Filter::matchesExclude(const std::string& content) const {
+    return matchesPatterns(
+        content, 
+        m_config.excludePatterns, 
+        m_cachedRegexes ? m_cachedRegexes->excludeRegexes 
+                        : std::vector<std::shared_ptr<std::regex>>()
+    );
+}
+
+bool Filter::isBlankLine(const std::string& content) const {
+    return utils::StringUtils::isBlank(content);
+}
+
+bool Filter::isCommentLine(const std::string& content) const {
+    std::string trimmed = utils::StringUtils::trimLeft(content);
+    return utils::StringUtils::startsWith(trimmed, m_config.commentPrefix);
+}
+
+void Filter::setCustomFilter(std::function<bool(const LineData&)> customFilter) {
+    m_config.customFilter = [customFilter](const std::string& content) {
+        LineData line;
+        line.content = content;
+        line.isValid = true;
+        return customFilter(line);
+    };
 }
 
 void Filter::compilePatterns() {
-    auto compile = [this](const std::vector<std::string>& patterns, 
-                           std::vector<std::regex>& regexes) {
-        for (const auto& pattern : patterns) {
-            if (pattern.empty()) {
-                continue;
-            }
-            
-            std::string regexPattern;
-            if (pattern.find_first_of("*?[]") != std::string::npos) {
-                regexPattern = wildCardToRegex(pattern);
-            } else {
-                regexPattern = pattern;
-            }
-            
-            try {
-                auto flags = std::regex::ECMAScript;
-                if (!m_config.caseSensitive) {
-                    flags |= std::regex::icase;
-                }
-                regexes.emplace_back(regexPattern, flags);
-            } catch (const std::regex_error&) {
-            }
-        }
-    };
-    
-    compile(m_config.includePatterns, m_includeRegexes);
-    compile(m_config.excludePatterns, m_excludeRegexes);
+    m_cachedRegexes = RegexCache::instance().getOrCreate(
+        m_config.includePatterns,
+        m_config.excludePatterns,
+        m_config.caseSensitive
+    );
 }
 
 bool Filter::matchesPatterns(
     const std::string& content,
     const std::vector<std::string>& patterns,
-    const std::vector<std::regex>& regexes
+    const std::vector<std::shared_ptr<std::regex>>& regexes
 ) const {
     for (const auto& re : regexes) {
-        if (std::regex_search(content, re)) {
+        if (re && std::regex_search(content, *re)) {
             return true;
         }
     }

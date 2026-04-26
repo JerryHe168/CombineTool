@@ -19,41 +19,11 @@ namespace utils {
 
 #ifdef _WIN32
 static std::string fromWidePath(const std::wstring& wpath) {
-    if (wpath.empty()) {
-        return "";
-    }
-    
-    int size = WideCharToMultiByte(
-        CP_ACP, 0, wpath.c_str(), static_cast<int>(wpath.length()), nullptr, 0, nullptr, nullptr
-    );
-    if (size <= 0) {
-        return "";
-    }
-    
-    std::string result(size, 0);
-    WideCharToMultiByte(
-        CP_ACP, 0, wpath.c_str(), static_cast<int>(wpath.length()), &result[0], size, nullptr, nullptr
-    );
-    return result;
+    return StringUtils::fromWideString(wpath);
 }
 
 static std::wstring toWidePath(const std::string& path) {
-    if (path.empty()) {
-        return L"";
-    }
-    
-    int size = MultiByteToWideChar(
-        CP_ACP, 0, path.c_str(), static_cast<int>(path.length()), nullptr, 0
-    );
-    if (size <= 0) {
-        return L"";
-    }
-    
-    std::wstring result(size, 0);
-    MultiByteToWideChar(
-        CP_ACP, 0, path.c_str(), static_cast<int>(path.length()), &result[0], size
-    );
-    return result;
+    return StringUtils::toWideString(path);
 }
 #endif
 
