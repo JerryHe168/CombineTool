@@ -82,6 +82,54 @@ void Filter::setCustomFilter(std::function<bool(const LineData&)> customFilter) 
     };
 }
 
+namespace {
+std::string wildCardToRegex(const std::string& pattern) {
+    std::string regex;
+    regex.reserve(pattern.size() * 2);
+    
+    for (size_t i = 0; i < pattern.size(); ++i) {
+        char c = pattern[i];
+        switch (c) {
+            case '*':
+                regex += ".*";
+                break;
+            case '?':
+                regex += '.';
+                break;
+            case '.':
+            case '+':
+            case '^':
+            case '$':
+            case '(':
+            case ')':
+            case '{':
+            case '}':
+            case '|':
+            case '\\':
+                regex += '\\';
+                regex += c;
+                break;
+            case '[':
+                if (i + 1 < pattern.size() && pattern[i + 1] == ']') {
+                    regex += "[]";
+                    ++i;
+                } else {
+                    regex += c;
+                }
+                break;
+            case ']':
+                regex += c;
+                break;
+            default:
+                regex += c;
+                break;
+        }
+    }
+    
+    return regex;
+}
+}
+
 void Filter::compilePatterns() {
     auto compile = [this](const std::vector<std::string>& patterns, 
                            std::vector<std::regex>& regexes) {
@@ -90,8 +138,11 @@ void Filter::compilePatterns() {
                 continue;
             }
             
+            std::string regexPattern;
             if (pattern.find_first_of("*?[]") != std::string::npos) {
-                continue;
+                regexPattern = wildCardToRegex(pattern);
+            } else {
+                regexPattern = pattern;
             }
             
             try {
@@ -99,7 +150,7 @@ void Filter::compilePatterns() {
                 if (!m_config.caseSensitive) {
                     flags |= std::regex::icase;
                 }
-                regexes.emplace_back(pattern, flags);
+                regexes.emplace_back(regexPattern, flags);
             } catch (const std::regex_error&) {
             }
         }

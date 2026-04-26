@@ -310,7 +310,7 @@ MergeConfig ConfigBuilder::buildFromArgs(const ParseResult& result) {
         } else if (key == "encoding" || key == "e") {
             config.targetEncoding = parseEncoding(value);
         } else if (key == "delimiter" || key == "d") {
-            if (value == "\\t" || value == "\\t") {
+            if (value == "\\t") {
                 config.outputDelimiter = "\t";
             } else {
                 config.outputDelimiter = value;

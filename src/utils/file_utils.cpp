@@ -256,34 +256,18 @@ bool FileUtils::readLine(
         return false;
     }
     
-    constexpr size_t bufferSize = 4096;
-    std::vector<char> buffer(bufferSize);
-    
-    while (stream) {
-        stream.getline(buffer.data(), static_cast<std::streamsize>(bufferSize));
-        
-        if (stream.eof() && stream.gcount() == 0) {
-            break;
+    if (std::getline(stream, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
         }
         
-        auto count = static_cast<size_t>(stream.gcount());
-        if (count > 0 && buffer[count - 1] == '\0') {
-            --count;
+        if (keepNewline) {
+            line += '\n';
         }
-        
-        line.append(buffer.data(), count);
-        
-        if (stream.fail()) {
-            stream.clear();
-        } else {
-            if (keepNewline) {
-                line += '\n';
-            }
-            break;
-        }
+        return true;
     }
     
-    return !line.empty() || (stream.eof() && !stream.bad());
+    return !line.empty();
 }
 
 bool FileUtils::writeLine(

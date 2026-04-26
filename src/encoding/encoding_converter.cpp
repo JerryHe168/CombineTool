@@ -622,6 +622,10 @@ bool EncodingConverter::isGBKCodepoint(char32_t codepoint) {
     return unicodeToGBK(codepoint) != 0;
 }
 
+namespace {
+constexpr UINT CP_GBK = 936;
+}
+
 char32_t EncodingConverter::gbkToUnicode(uint16_t gbkCode) {
     if (gbkCode < 0x80) {
         return gbkCode;
@@ -630,7 +634,7 @@ char32_t EncodingConverter::gbkToUnicode(uint16_t gbkCode) {
 #ifdef _WIN32
     char mb[2] = { static_cast<char>(gbkCode >> 8), static_cast<char>(gbkCode & 0xFF) };
     wchar_t wc;
-    int result = MultiByteToWideChar(CP_ACP, 0, mb, 2, &wc, 1);
+    int result = MultiByteToWideChar(CP_GBK, 0, mb, 2, &wc, 1);
     if (result > 0) {
         return static_cast<char32_t>(wc);
     }
@@ -647,7 +651,7 @@ uint16_t EncodingConverter::unicodeToGBK(char32_t codepoint) {
 #ifdef _WIN32
     wchar_t wc = static_cast<wchar_t>(codepoint);
     char mb[3] = {0};
-    int result = WideCharToMultiByte(CP_ACP, 0, &wc, 1, mb, 3, nullptr, nullptr);
+    int result = WideCharToMultiByte(CP_GBK, 0, &wc, 1, mb, 3, nullptr, nullptr);
     if (result == 2) {
         return (static_cast<uint8_t>(mb[0]) << 8) | static_cast<uint8_t>(mb[1]);
     }
