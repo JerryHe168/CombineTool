@@ -11,6 +11,9 @@ constexpr size_t DEFAULT_BUFFER_SIZE = 64 * 1024;
 constexpr size_t LARGE_BUFFER_SIZE = 1 * 1024 * 1024;
 constexpr size_t MAX_MEMORY_MAP_SIZE = static_cast<size_t>(2) * 1024 * 1024 * 1024;
 
+constexpr uint64_t DEFAULT_MEMORY_MAP_THRESHOLD = 100 * 1024 * 1024;
+constexpr bool DEFAULT_USE_SMART_IO = true;
+
 constexpr size_t FORMAT_DETECTION_SAMPLE_SIZE = 100 * 1024;
 constexpr size_t ENCODING_DETECTION_SAMPLE_SIZE = 64 * 1024;
 constexpr size_t HEADER_DETECTION_LINES = 10;
@@ -26,6 +29,8 @@ constexpr bool DEFAULT_OUTPUT_HEADER = true;
 
 constexpr int DEFAULT_START_COLUMN = 0;
 constexpr int DEFAULT_END_COLUMN = -1;
+
+constexpr size_t DEFAULT_BINARY_CHUNK_SIZE = 64 * 1024;
 
 }
 

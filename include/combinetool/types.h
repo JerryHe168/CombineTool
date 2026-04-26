@@ -11,7 +11,43 @@ namespace combinetool {
 enum class MergeMode {
     Sequential,
     Interleaved,
-    Conditional
+    Conditional,
+    TimestampSorted,
+    Binary
+};
+
+enum class TimestampFormat {
+    Auto,
+    ISO8601,
+    RFC2822,
+    UnixTimestamp,
+    Custom
+};
+
+enum class FileType {
+    AutoDetect,
+    Text,
+    Binary
+};
+
+struct TimestampConfig {
+    TimestampFormat format;
+    std::string customPattern;
+    size_t extractColumn;
+    std::string columnDelimiter;
+};
+
+struct SmartIOConfig {
+    bool useSmartIO;
+    uint64_t memoryMapThreshold;
+    size_t streamBufferSize;
+};
+
+struct BinaryMergeConfig {
+    FileType inputFileType;
+    FileType outputFileType;
+    size_t chunkSize;
+    bool preserveHeaders;
 };
 
 enum class TextFormat {
@@ -105,6 +141,10 @@ struct MergeConfig {
     std::string conditionalExpression;
     FilterConfig filterConfig;
     DeduplicationConfig deduplicationConfig;
+    
+    TimestampConfig timestampConfig;
+    SmartIOConfig smartIOConfig;
+    BinaryMergeConfig binaryConfig;
 };
 
 struct LineData {
