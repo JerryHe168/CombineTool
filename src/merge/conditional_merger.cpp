@@ -1,3 +1,5 @@
+#define NOMINMAX
+
 #include "combinetool/merge/conditional_merger.h"
 #include "combinetool/utils/path_utils.h"
 #include "combinetool/utils/file_utils.h"
@@ -6,10 +8,13 @@
 #include "combinetool/encoding/encoding_converter.h"
 #include "combinetool/format/format_detector.h"
 #include "combinetool/config.h"
+#include "combinetool/io/smart_file_reader.h"
 
 #include <fstream>
 #include <map>
 #include <set>
+#include <unordered_map>
+#include <algorithm>
 
 namespace combinetool {
 namespace merge {
@@ -48,7 +53,7 @@ bool ConditionalMerger::merge() {
     m_totalLinesWritten = 0;
     m_filesProcessed = 0;
     
-    if (!loadAllFiles()) {
+    if (!prepareFiles()) {
         return false;
     }
     
@@ -56,7 +61,7 @@ bool ConditionalMerger::merge() {
         return false;
     }
     
-    if (!performJoin()) {
+    if (!performHashJoin()) {
         return false;
     }
     
@@ -64,6 +69,38 @@ bool ConditionalMerger::merge() {
     m_filesProcessed = m_config.inputFiles.size();
     
     return true;
+}
+
+bool ConditionalMerger::shouldUseHashJoin(uint64_t file1Size, uint64_t file2Size) const {
+    return true;
+}
+
+bool ConditionalMerger::prepareFiles() {
+    m_fileInfos.clear();
+    
+    for (const auto& filePath : m_config.inputFiles) {
+        if (!utils::PathUtils::isFile(filePath)) {
+            continue;
+        }
+        
+        auto formatResult = format::FormatDetector::detectFromFile(filePath);
+        
+        FileInfo fileInfo;
+        fileInfo.filePath = filePath;
+        fileInfo.delimiter = formatResult.detectedDelimiter;
+        fileInfo.hasHeader = formatResult.hasHeader;
+        fileInfo.keyColumnIndex = 0;
+        fileInfo.columnCount = 0;
+        
+        if (formatResult.hasHeader && !formatResult.headerColumns.empty()) {
+            fileInfo.headers = formatResult.headerColumns;
+            fileInfo.columnCount = formatResult.headerColumns.size();
+        }
+        
+        m_fileInfos.push_back(fileInfo);
+    }
+    
+    return m_fileInfos.size() >= 2;
 }
 
 void ConditionalMerger::setJoinKeyColumn(int columnIndex) {
@@ -90,136 +127,183 @@ void ConditionalMerger::setJoinType(const std::string& joinType) {
     }
 }
 
-bool ConditionalMerger::loadAllFiles() {
-    m_fileData.clear();
-    
-    for (const auto& filePath : m_config.inputFiles) {
-        if (!utils::PathUtils::isFile(filePath)) {
-            continue;
-        }
-        
-        auto formatResult = format::FormatDetector::detectFromFile(filePath);
-        
-        auto lines = utils::FileUtils::readAllLines(filePath);
-        if (lines.empty()) {
-            continue;
-        }
-        
-        FileData fileData;
-        fileData.filePath = filePath;
-        fileData.keyColumnIndex = 0;
-        
-        size_t startLine = 0;
-        if (formatResult.hasHeader && !lines.empty()) {
-            fileData.headers = format::FormatDetector::parseCSVLine(
-                lines[0], 
-                formatResult.detectedDelimiter
-            );
-            startLine = 1;
-        }
-        
-        for (size_t i = startLine; i < lines.size(); ++i) {
-            if (utils::StringUtils::isBlank(lines[i])) {
-                continue;
-            }
-            
-            auto row = format::FormatDetector::parseCSVLine(
-                lines[i], 
-                formatResult.detectedDelimiter
-            );
-            fileData.rows.push_back(row);
-        }
-        
-        m_fileData.push_back(fileData);
-    }
-    
-    return m_fileData.size() >= 2;
-}
-
 bool ConditionalMerger::resolveKeyColumns() {
-    for (auto& fileData : m_fileData) {
+    for (auto& fileInfo : m_fileInfos) {
         if (m_joinKeyColumn >= 0) {
-            fileData.keyColumnIndex = m_joinKeyColumn;
+            fileInfo.keyColumnIndex = m_joinKeyColumn;
         } else if (!m_joinKeyColumnName.empty()) {
             bool found = false;
-            for (size_t i = 0; i < fileData.headers.size(); ++i) {
-                if (fileData.headers[i] == m_joinKeyColumnName) {
-                    fileData.keyColumnIndex = static_cast<int>(i);
+            for (size_t i = 0; i < fileInfo.headers.size(); ++i) {
+                if (fileInfo.headers[i] == m_joinKeyColumnName) {
+                    fileInfo.keyColumnIndex = static_cast<int>(i);
                     found = true;
                     break;
                 }
             }
             if (!found) {
-                fileData.keyColumnIndex = 0;
+                fileInfo.keyColumnIndex = 0;
             }
         } else {
-            fileData.keyColumnIndex = 0;
+            fileInfo.keyColumnIndex = 0;
         }
     }
     
     return true;
 }
 
-bool ConditionalMerger::performJoin() {
-    if (m_fileData.size() < 2) {
+bool ConditionalMerger::loadRightTableToMemory(
+    const std::string& filePath,
+    const std::string& delimiter,
+    bool hasHeader,
+    size_t keyColumnIndex,
+    RowList& rows,
+    RowIndexMap& index,
+    size_t& columnCount
+) {
+    io::SmartFileReader reader(
+        filePath,
+        m_config.smartIOConfig.memoryMapThreshold,
+        m_config.bufferSize
+    );
+    
+    if (!reader.isOpen()) {
         return false;
     }
     
-    const auto& file1 = m_fileData[0];
-    const auto& file2 = m_fileData[1];
+    io::SmartLineIterator iterator(reader);
+    size_t lineNumber = 0;
+    columnCount = 0;
     
-    if (m_config.outputHeader) {
-        auto combinedHeaders = combineRows(file1.headers, file2.headers, 
-            file1.headers.empty() ? 0 : file1.headers.size(),
-            file2.headers.empty() ? 0 : file2.headers.size());
+    std::string line;
+    while (iterator.hasNext()) {
+        if (!iterator.next(line)) {
+            break;
+        }
         
-        auto line = format::FormatDetector::formatCSVLine(
-            combinedHeaders, 
-            m_config.outputDelimiter
-        );
-        if (!writeLine(line)) {
-            return false;
-        }
-    }
-    
-    std::map<std::string, std::vector<const std::vector<std::string>*>> map1;
-    std::map<std::string, std::vector<const std::vector<std::string>*>> map2;
-    std::set<std::string> allKeys;
-    
-    for (const auto& row : file1.rows) {
-        if (static_cast<size_t>(file1.keyColumnIndex) < row.size()) {
-            const std::string& key = row[file1.keyColumnIndex];
-            map1[key].push_back(&row);
-            allKeys.insert(key);
-        }
-    }
-    
-    for (const auto& row : file2.rows) {
-        if (static_cast<size_t>(file2.keyColumnIndex) < row.size()) {
-            const std::string& key = row[file2.keyColumnIndex];
-            map2[key].push_back(&row);
-            allKeys.insert(key);
-        }
-    }
-    
-    for (const auto& key : allKeys) {
-        auto it1 = map1.find(key);
-        auto it2 = map2.find(key);
+        m_totalLinesProcessed++;
+        lineNumber++;
         
-        bool has1 = it1 != map1.end();
-        bool has2 = it2 != map2.end();
+        if (lineNumber == 1 && hasHeader) {
+            auto headerRow = format::FormatDetector::parseCSVLine(line, delimiter);
+            columnCount = headerRow.size();
+            continue;
+        }
+        
+        if (utils::StringUtils::isBlank(line)) {
+            continue;
+        }
+        
+        auto row = format::FormatDetector::parseCSVLine(line, delimiter);
+        
+        if (columnCount == 0 && !row.empty()) {
+            columnCount = row.size();
+        }
+        
+        if (keyColumnIndex < row.size()) {
+            const std::string& key = row[keyColumnIndex];
+            index[key].push_back(rows.size());
+        }
+        
+        rows.push_back(row);
+    }
+    
+    return !rows.empty();
+}
+
+bool ConditionalMerger::streamLeftTableAndJoin(
+    const std::string& filePath,
+    const std::string& delimiter,
+    bool hasHeader,
+    size_t leftKeyColumnIndex,
+    size_t leftColumnCount,
+    const RowList& rightRows,
+    const RowIndexMap& rightIndex,
+    size_t rightColumnCount,
+    const std::vector<std::string>& rightHeaders,
+    bool writeHeaders
+) {
+    io::SmartFileReader reader(
+        filePath,
+        m_config.smartIOConfig.memoryMapThreshold,
+        m_config.bufferSize
+    );
+    
+    if (!reader.isOpen()) {
+        return false;
+    }
+    
+    io::SmartLineIterator iterator(reader);
+    size_t lineNumber = 0;
+    
+    std::unordered_map<std::string, bool> matchedKeys;
+    std::vector<std::string> leftHeaders;
+    bool headerWritten = !writeHeaders;
+    
+    std::string line;
+    while (iterator.hasNext()) {
+        if (!iterator.next(line)) {
+            break;
+        }
+        
+        m_totalLinesProcessed++;
+        lineNumber++;
+        
+        if (lineNumber == 1 && hasHeader) {
+            leftHeaders = format::FormatDetector::parseCSVLine(line, delimiter);
+            
+            if (writeHeaders && !headerWritten) {
+                auto combinedHeaders = combineRows(
+                    leftHeaders, rightHeaders,
+                    leftHeaders.size(), rightHeaders.size()
+                );
+                auto headerLine = format::FormatDetector::formatCSVLine(
+                    combinedHeaders, m_config.outputDelimiter
+                );
+                if (!writeLine(headerLine)) {
+                    return false;
+                }
+                headerWritten = true;
+            }
+            continue;
+        }
+        
+        if (utils::StringUtils::isBlank(line)) {
+            continue;
+        }
+        
+        auto leftRow = format::FormatDetector::parseCSVLine(line, delimiter);
+        
+        std::string key;
+        bool hasKey = false;
+        
+        if (leftKeyColumnIndex < leftRow.size()) {
+            key = leftRow[leftKeyColumnIndex];
+            hasKey = true;
+        }
+        
+        std::vector<size_t> matchingRightRowIndices;
+        bool hasMatch = false;
+        
+        if (hasKey) {
+            auto it = rightIndex.find(key);
+            if (it != rightIndex.end()) {
+                matchingRightRowIndices = it->second;
+                hasMatch = true;
+                matchedKeys[key] = true;
+            }
+        }
         
         bool shouldOutput = false;
         
         switch (m_joinType) {
             case JoinType::Inner:
-                shouldOutput = has1 && has2;
+                shouldOutput = hasMatch;
                 break;
             case JoinType::Left:
-                shouldOutput = has1;
+                shouldOutput = true;
                 break;
             case JoinType::Right:
-                shouldOutput = has2;
+                shouldOutput = false;
                 break;
             case JoinType::Full:
                 shouldOutput = true;
@@ -230,62 +314,170 @@ bool ConditionalMerger::performJoin() {
             continue;
         }
         
-        const auto& rows1 = has1 ? it1->second : std::vector<const std::vector<std::string>*>();
-        const auto& rows2 = has2 ? it2->second : std::vector<const std::vector<std::string>*>();
-        
-        if (rows1.empty()) {
-            for (const auto* row2 : rows2) {
-                std::vector<std::string> emptyRow(file1.rows.empty() ? 0 : file1.rows[0].size());
-                auto combined = combineRows(emptyRow, *row2, 
-                    emptyRow.size(), row2->size());
-                auto line = format::FormatDetector::formatCSVLine(
-                    combined, m_config.outputDelimiter
-                );
-                if (!writeLine(line)) {
-                    return false;
-                }
+        if (!hasMatch) {
+            std::vector<std::string> emptyRow(rightColumnCount);
+            auto combined = combineRows(leftRow, emptyRow, leftRow.size(), rightColumnCount);
+            
+            LineData lineData;
+            lineData.content = format::FormatDetector::formatCSVLine(
+                combined, m_config.outputDelimiter
+            );
+            lineData.isValid = true;
+            
+            if (m_filter && !m_filter->shouldKeep(lineData)) {
+                continue;
             }
-        } else if (rows2.empty()) {
-            for (const auto* row1 : rows1) {
-                std::vector<std::string> emptyRow(file2.rows.empty() ? 0 : file2.rows[0].size());
-                auto combined = combineRows(*row1, emptyRow, 
-                    row1->size(), emptyRow.size());
-                auto line = format::FormatDetector::formatCSVLine(
-                    combined, m_config.outputDelimiter
-                );
-                if (!writeLine(line)) {
-                    return false;
-                }
+            
+            if (m_deduplicator && m_deduplicator->isDuplicate(lineData)) {
+                continue;
+            }
+            
+            if (!writeLine(lineData.content)) {
+                return false;
             }
         } else {
-            for (const auto* row1 : rows1) {
-                for (const auto* row2 : rows2) {
-                    auto combined = combineRows(*row1, *row2, 
-                        row1->size(), row2->size());
-                    
-                    LineData lineData;
-                    lineData.content = format::FormatDetector::formatCSVLine(
-                        combined, m_config.outputDelimiter
-                    );
-                    lineData.isValid = true;
-                    
-                    if (m_filter && !m_filter->shouldKeep(lineData)) {
-                        continue;
-                    }
-                    
-                    if (m_deduplicator && m_deduplicator->isDuplicate(lineData)) {
-                        continue;
-                    }
-                    
-                    if (!writeLine(lineData.content)) {
-                        return false;
-                    }
+            for (size_t rightIdx : matchingRightRowIndices) {
+                if (rightIdx >= rightRows.size()) {
+                    continue;
+                }
+                
+                const auto& rightRow = rightRows[rightIdx];
+                
+                auto combined = combineRows(leftRow, rightRow, leftRow.size(), rightRow.size());
+                
+                LineData lineData;
+                lineData.content = format::FormatDetector::formatCSVLine(
+                    combined, m_config.outputDelimiter
+                );
+                lineData.isValid = true;
+                
+                if (m_filter && !m_filter->shouldKeep(lineData)) {
+                    continue;
+                }
+                
+                if (m_deduplicator && m_deduplicator->isDuplicate(lineData)) {
+                    continue;
+                }
+                
+                if (!writeLine(lineData.content)) {
+                    return false;
+                }
+            }
+        }
+    }
+    
+    if (m_joinType == JoinType::Right || m_joinType == JoinType::Full) {
+        for (const auto& entry : rightIndex) {
+            const std::string& key = entry.first;
+            
+            if (matchedKeys.find(key) != matchedKeys.end()) {
+                continue;
+            }
+            
+            for (size_t rightIdx : entry.second) {
+                if (rightIdx >= rightRows.size()) {
+                    continue;
+                }
+                
+                const auto& rightRow = rightRows[rightIdx];
+                
+                std::vector<std::string> emptyRow(leftColumnCount);
+                auto combined = combineRows(emptyRow, rightRow, leftColumnCount, rightRow.size());
+                
+                LineData lineData;
+                lineData.content = format::FormatDetector::formatCSVLine(
+                    combined, m_config.outputDelimiter
+                );
+                lineData.isValid = true;
+                
+                if (m_filter && !m_filter->shouldKeep(lineData)) {
+                    continue;
+                }
+                
+                if (m_deduplicator && m_deduplicator->isDuplicate(lineData)) {
+                    continue;
+                }
+                
+                if (!writeLine(lineData.content)) {
+                    return false;
                 }
             }
         }
     }
     
     return true;
+}
+
+bool ConditionalMerger::performHashJoin() {
+    if (m_fileInfos.size() < 2) {
+        return false;
+    }
+    
+    const auto& leftFile = m_fileInfos[0];
+    const auto& rightFile = m_fileInfos[1];
+    
+    uint64_t leftFileSize = utils::PathUtils::getFileSize(leftFile.filePath);
+    uint64_t rightFileSize = utils::PathUtils::getFileSize(rightFile.filePath);
+    
+    bool swapTables = false;
+    if (rightFileSize > leftFileSize && (m_joinType == JoinType::Inner || m_joinType == JoinType::Full)) {
+        swapTables = true;
+    }
+    
+    const auto* smallerFile = swapTables ? &leftFile : &rightFile;
+    const auto* largerFile = swapTables ? &rightFile : &leftFile;
+    
+    RowList rightRows;
+    RowIndexMap rightIndex;
+    size_t rightColumnCount = 0;
+    
+    if (!loadRightTableToMemory(
+        smallerFile->filePath,
+        smallerFile->delimiter,
+        smallerFile->hasHeader,
+        static_cast<size_t>(smallerFile->keyColumnIndex),
+        rightRows,
+        rightIndex,
+        rightColumnCount
+    )) {
+        return false;
+    }
+    
+    bool writeHeaders = m_config.outputHeader;
+    
+    if (swapTables) {
+        return streamLeftTableAndJoin(
+            largerFile->filePath,
+            largerFile->delimiter,
+            largerFile->hasHeader,
+            static_cast<size_t>(largerFile->keyColumnIndex),
+            largerFile->columnCount,
+            rightRows,
+            rightIndex,
+            rightColumnCount,
+            smallerFile->headers,
+            writeHeaders
+        );
+    } else {
+        return streamLeftTableAndJoin(
+            largerFile->filePath,
+            largerFile->delimiter,
+            largerFile->hasHeader,
+            static_cast<size_t>(largerFile->keyColumnIndex),
+            largerFile->columnCount,
+            rightRows,
+            rightIndex,
+            rightColumnCount,
+            smallerFile->headers,
+            writeHeaders
+        );
+    }
+}
+
+bool ConditionalMerger::writeEmptyRow(size_t columnCount) {
+    std::vector<std::string> emptyRow(columnCount);
+    auto line = format::FormatDetector::formatCSVLine(emptyRow, m_config.outputDelimiter);
+    return writeLine(line);
 }
 
 std::vector<std::string> ConditionalMerger::combineRows(

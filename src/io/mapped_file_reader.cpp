@@ -1,8 +1,11 @@
+#define NOMINMAX
+
 #include "combinetool/io/mapped_file_reader.h"
 #include "combinetool/utils/path_utils.h"
 #include "combinetool/encoding/encoding_detector.h"
 
 #include <cstring>
+#include <algorithm>
 
 namespace combinetool {
 namespace io {
@@ -26,10 +29,20 @@ MappedFileReader::MappedFileReader(
     , m_isOpen(false)
     , m_isMapped(false)
     , m_currentOffset(0)
+    , m_chunkSize(config::LARGE_BUFFER_SIZE)
+    , m_currentChunkOffset(0)
+    , m_currentChunkSize(0)
+    , m_chunkReadOffset(0)
+    , m_isChunkedMode(false)
+    , m_chunkNeedsRefill(true)
 {
     if (openFile()) {
         auto encodingResult = encoding::EncodingDetector::detectFromFile(filePath);
         m_encoding = encodingResult.encoding;
+        
+        if (m_fileSize > m_mapSize) {
+            m_isChunkedMode = true;
+        }
     }
 }
 
@@ -378,6 +391,278 @@ void MappedLineIterator::prefetch() {
     m_nextLine.clear();
     
     m_hasNext = m_reader.readLine(m_nextLine, m_offset, false);
+}
+
+void MappedFileReader::setChunkSize(size_t chunkSize) {
+    m_chunkSize = chunkSize;
+}
+
+size_t MappedFileReader::getChunkSize() const {
+    return m_chunkSize;
+}
+
+bool MappedFileReader::isChunkedMode() const {
+    return m_isChunkedMode;
+}
+
+size_t MappedFileReader::getSystemPageSize() const {
+#ifdef _WIN32
+    SYSTEM_INFO sysInfo;
+    GetSystemInfo(&sysInfo);
+    return static_cast<size_t>(sysInfo.dwPageSize);
+#else
+    return static_cast<size_t>(sysconf(_SC_PAGESIZE));
+#endif
+}
+
+uint64_t MappedFileReader::alignToPageBoundary(uint64_t offset) const {
+    size_t pageSize = getSystemPageSize();
+    return offset - (offset % pageSize);
+}
+
+bool MappedFileReader::mapChunk(uint64_t offset) {
+    if (!m_isOpen) {
+        return false;
+    }
+    
+    if (m_isMapped) {
+        unmapChunk();
+    }
+    
+    if (offset >= m_fileSize) {
+        return false;
+    }
+    
+    uint64_t alignedOffset = alignToPageBoundary(offset);
+    uint64_t offsetWithinPage = offset - alignedOffset;
+    size_t actualChunkSize = m_chunkSize;
+    
+    if (alignedOffset + actualChunkSize > m_fileSize) {
+        actualChunkSize = static_cast<size_t>(m_fileSize - alignedOffset);
+    }
+    
+#ifdef _WIN32
+    m_mapHandle = CreateFileMappingW(
+        m_fileHandle,
+        NULL,
+        PAGE_READONLY,
+        static_cast<DWORD>(alignedOffset >> 32),
+        static_cast<DWORD>(alignedOffset & 0xFFFFFFFF),
+        NULL
+    );
+    
+    if (m_mapHandle == NULL) {
+        return false;
+    }
+    
+    DWORD highOffset = static_cast<DWORD>(alignedOffset >> 32);
+    DWORD lowOffset = static_cast<DWORD>(alignedOffset & 0xFFFFFFFF);
+    
+    m_mappedData = MapViewOfFile(
+        m_mapHandle,
+        FILE_MAP_READ,
+        highOffset,
+        lowOffset,
+        actualChunkSize
+    );
+    
+    if (m_mappedData == nullptr) {
+        CloseHandle(m_mapHandle);
+        m_mapHandle = NULL;
+        return false;
+    }
+#else
+    m_mappedData = mmap(
+        nullptr,
+        actualChunkSize,
+        PROT_READ,
+        MAP_PRIVATE,
+        m_fileDescriptor,
+        static_cast<off_t>(alignedOffset)
+    );
+    
+    if (m_mappedData == MAP_FAILED) {
+        return false;
+    }
+#endif
+    
+    m_currentChunkOffset = alignedOffset;
+    m_currentChunkSize = actualChunkSize;
+    m_chunkReadOffset = static_cast<size_t>(offsetWithinPage);
+    m_isMapped = true;
+    m_chunkNeedsRefill = false;
+    
+    return true;
+}
+
+bool MappedFileReader::unmapChunk() {
+    return unmap();
+}
+
+bool MappedFileReader::mapNextChunk() {
+    uint64_t nextOffset = m_currentChunkOffset + m_currentChunkSize;
+    return mapChunk(nextOffset);
+}
+
+const char* MappedFileReader::getChunkData() const {
+    if (!m_isMapped || m_mappedData == nullptr) {
+        return nullptr;
+    }
+    return static_cast<const char*>(m_mappedData);
+}
+
+size_t MappedFileReader::getChunkSizeMapped() const {
+    return m_currentChunkSize;
+}
+
+uint64_t MappedFileReader::getChunkOffset() const {
+    return m_currentChunkOffset;
+}
+
+bool MappedFileReader::isAtEndOfFile() const {
+    return !m_isChunkedMode ? (m_currentOffset >= m_fileSize) :
+           (m_currentChunkOffset + m_chunkReadOffset >= m_fileSize);
+}
+
+bool MappedFileReader::readBytes(char* buffer, size_t bufferSize, size_t& bytesRead) {
+    bytesRead = 0;
+    
+    if (!m_isChunkedMode) {
+        if (!m_isMapped) {
+            return false;
+        }
+        
+        const char* data = getData();
+        if (data == nullptr) {
+            return false;
+        }
+        
+        size_t remaining = static_cast<size_t>(m_fileSize) - m_currentOffset;
+        size_t toRead = std::min(bufferSize, remaining);
+        
+        if (toRead > 0) {
+            std::memcpy(buffer, data + m_currentOffset, toRead);
+            bytesRead = toRead;
+            m_currentOffset += toRead;
+            updateProgress();
+        }
+        
+        return bytesRead > 0 || m_currentOffset < m_fileSize;
+    }
+    
+    while (bytesRead < bufferSize && !isAtEndOfFile()) {
+        if (m_chunkNeedsRefill || !m_isMapped) {
+            uint64_t nextOffset = m_currentChunkOffset + m_chunkReadOffset;
+            if (!mapChunk(nextOffset)) {
+                break;
+            }
+        }
+        
+        const char* data = getChunkData();
+        if (data == nullptr) {
+            break;
+        }
+        
+        size_t remainingInChunk = m_currentChunkSize - m_chunkReadOffset;
+        size_t remainingNeeded = bufferSize - bytesRead;
+        size_t toRead = std::min(remainingInChunk, remainingNeeded);
+        
+        if (toRead > 0) {
+            std::memcpy(buffer + bytesRead, data + m_chunkReadOffset, toRead);
+            bytesRead += toRead;
+            m_chunkReadOffset += toRead;
+        }
+        
+        if (m_chunkReadOffset >= m_currentChunkSize) {
+            m_chunkNeedsRefill = true;
+        }
+    }
+    
+    return bytesRead > 0 || (!isAtEndOfFile());
+}
+
+bool MappedFileReader::readLineChunked(std::string& line, bool keepNewline) {
+    line.clear();
+    
+    if (!m_isChunkedMode) {
+        return false;
+    }
+    
+    std::string accumulated;
+    bool foundNewline = false;
+    bool hasCR = false;
+    bool hasLF = false;
+    
+    while (!isAtEndOfFile() && !foundNewline) {
+        if (m_chunkNeedsRefill || !m_isMapped) {
+            uint64_t nextOffset = m_currentChunkOffset + m_chunkReadOffset;
+            if (!mapChunk(nextOffset)) {
+                break;
+            }
+        }
+        
+        const char* data = getChunkData();
+        if (data == nullptr) {
+            break;
+        }
+        
+        size_t start = m_chunkReadOffset;
+        size_t end = start;
+        size_t chunkSize = m_currentChunkSize;
+        
+        while (end < chunkSize) {
+            if (data[end] == '\n') {
+                foundNewline = true;
+                hasLF = true;
+                break;
+            }
+            if (data[end] == '\r') {
+                foundNewline = true;
+                hasCR = true;
+                if (end + 1 < chunkSize && data[end + 1] == '\n') {
+                    hasLF = true;
+                }
+                break;
+            }
+            ++end;
+        }
+        
+        if (start < end) {
+            accumulated.append(data + start, end - start);
+        }
+        
+        if (foundNewline) {
+            if (hasCR && hasLF) {
+                end += 2;
+            } else {
+                end += 1;
+            }
+        } else {
+            end = chunkSize;
+        }
+        
+        m_chunkReadOffset = end;
+        
+        if (m_chunkReadOffset >= m_currentChunkSize) {
+            m_chunkNeedsRefill = true;
+        }
+    }
+    
+    if (accumulated.empty() && !foundNewline && isAtEndOfFile()) {
+        return false;
+    }
+    
+    line = accumulated;
+    
+    if (keepNewline && foundNewline) {
+        if (hasCR) {
+            line += "\r\n";
+        } else {
+            line += "\n";
+        }
+    }
+    
+    return true;
 }
 
 }

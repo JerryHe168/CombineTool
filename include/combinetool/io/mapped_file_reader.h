@@ -49,6 +49,23 @@ public:
     void setProgressCallback(
         std::function<void(uint64_t current, uint64_t total)> callback
     );
+    
+    void setChunkSize(size_t chunkSize);
+    size_t getChunkSize() const;
+    
+    bool isChunkedMode() const;
+    
+    bool mapChunk(uint64_t offset);
+    bool unmapChunk();
+    bool mapNextChunk();
+    
+    const char* getChunkData() const;
+    size_t getChunkSizeMapped() const;
+    uint64_t getChunkOffset() const;
+    bool isAtEndOfFile() const;
+    
+    bool readBytes(char* buffer, size_t bufferSize, size_t& bytesRead);
+    bool readLineChunked(std::string& line, bool keepNewline = false);
 
 private:
     std::string m_filePath;
@@ -71,9 +88,19 @@ private:
     
     std::function<void(uint64_t, uint64_t)> m_progressCallback;
     
+    size_t m_chunkSize;
+    uint64_t m_currentChunkOffset;
+    size_t m_currentChunkSize;
+    size_t m_chunkReadOffset;
+    bool m_isChunkedMode;
+    bool m_chunkNeedsRefill;
+    
     bool openFile();
     void closeFile();
     void updateProgress();
+    
+    size_t getSystemPageSize() const;
+    uint64_t alignToPageBoundary(uint64_t offset) const;
 };
 
 class MappedLineIterator {
