@@ -5,10 +5,48 @@
 #include <functional>
 #include <regex>
 #include <unordered_set>
+#include <memory>
+#include <mutex>
 #include "combinetool/types.h"
 
 namespace combinetool {
 namespace filter {
+
+class RegexCache {
+public:
+    struct CacheKey {
+        std::vector<std::string> includePatterns;
+        std::vector<std::string> excludePatterns;
+        bool caseSensitive;
+        
+        bool operator==(const CacheKey& other) const;
+    };
+    
+    struct CacheKeyHash {
+        size_t operator()(const CacheKey& key) const;
+    };
+    
+    struct CachedRegexes {
+        std::vector<std::shared_ptr<std::regex>> includeRegexes;
+        std::vector<std::shared_ptr<std::regex>> excludeRegexes;
+    };
+    
+    static RegexCache& instance();
+    
+    std::shared_ptr<CachedRegexes> getOrCreate(
+        const std::vector<std::string>& includePatterns,
+        const std::vector<std::string>& excludePatterns,
+        bool caseSensitive
+    );
+    
+    void clear();
+
+private:
+    RegexCache() = default;
+    
+    std::unordered_map<CacheKey, std::shared_ptr<CachedRegexes>, CacheKeyHash> m_cache;
+    std::mutex m_mutex;
+};
 
 class Filter {
 public:
@@ -27,15 +65,14 @@ public:
 
 private:
     FilterConfig m_config;
-    std::vector<std::regex> m_includeRegexes;
-    std::vector<std::regex> m_excludeRegexes;
+    std::shared_ptr<RegexCache::CachedRegexes> m_cachedRegexes;
     
     void compilePatterns();
     
     bool matchesPatterns(
         const std::string& content,
         const std::vector<std::string>& patterns,
-        const std::vector<std::regex>& regexes
+        const std::vector<std::shared_ptr<std::regex>>& regexes
     ) const;
     
     bool matchesWildCard(const std::string& pattern, const std::string& content) const;

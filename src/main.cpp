@@ -3,6 +3,11 @@
 #include <vector>
 #include <memory>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#endif
+
 #include "combinetool/types.h"
 #include "combinetool/config.h"
 #include "combinetool/args/argument_parser.h"
@@ -17,6 +22,27 @@
 using namespace combinetool;
 using namespace combinetool::args;
 using namespace combinetool::merge;
+
+#ifdef _WIN32
+namespace {
+std::vector<std::string> getUtf8Args() {
+    std::vector<std::string> args;
+    
+    int argc = 0;
+    LPWSTR* argvW = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (argvW == nullptr) {
+        return args;
+    }
+    
+    for (int i = 1; i < argc; ++i) {
+        args.push_back(utils::StringUtils::fromWideString(std::wstring(argvW[i])));
+    }
+    
+    LocalFree(argvW);
+    return args;
+}
+}
+#endif
 
 void printBanner() {
     std::cout << R"(
@@ -164,7 +190,13 @@ int main(int argc, char* argv[]) {
     parser.addArgument("no-header", "", "Do not write header row", false, false, "", true);
     parser.addArgument("detect", "", "Detect file format, encoding, etc.", true);
     
-    auto result = parser.parse(argc, argv);
+    ParseResult result;
+#ifdef _WIN32
+    std::vector<std::string> utf8Args = getUtf8Args();
+    result = parser.parse(utf8Args);
+#else
+    result = parser.parse(argc, argv);
+#endif
     
     if (!result.success) {
         if (result.errorMessage == "HELP_REQUESTED") {
