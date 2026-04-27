@@ -270,12 +270,12 @@ bool MappedFileReader::openFile() {
     std::wstring wPath;
     if (!m_filePath.empty()) {
         int size = MultiByteToWideChar(
-            CP_ACP, 0, m_filePath.c_str(), static_cast<int>(m_filePath.length()), nullptr, 0
+            CP_UTF8, 0, m_filePath.c_str(), static_cast<int>(m_filePath.length()), nullptr, 0
         );
         if (size > 0) {
             wPath.resize(size, 0);
             MultiByteToWideChar(
-                CP_ACP, 0, m_filePath.c_str(), static_cast<int>(m_filePath.length()), &wPath[0], size
+                CP_UTF8, 0, m_filePath.c_str(), static_cast<int>(m_filePath.length()), &wPath[0], size
             );
         }
     }
@@ -344,7 +344,7 @@ void MappedFileReader::closeFile() {
 
 void MappedFileReader::updateProgress() {
     if (m_progressCallback && m_fileSize > 0) {
-        m_progressCallback(m_currentOffset, m_fileSize);
+        m_progressCallback(getCurrentOffset(), m_fileSize);
     }
 }
 
@@ -519,9 +519,13 @@ uint64_t MappedFileReader::getChunkOffset() const {
     return m_currentChunkOffset;
 }
 
+uint64_t MappedFileReader::getCurrentOffset() const {
+    return !m_isChunkedMode ? static_cast<uint64_t>(m_currentOffset) :
+           (m_currentChunkOffset + m_chunkReadOffset);
+}
+
 bool MappedFileReader::isAtEndOfFile() const {
-    return !m_isChunkedMode ? (m_currentOffset >= m_fileSize) :
-           (m_currentChunkOffset + m_chunkReadOffset >= m_fileSize);
+    return getCurrentOffset() >= m_fileSize;
 }
 
 bool MappedFileReader::readBytes(char* buffer, size_t bufferSize, size_t& bytesRead) {

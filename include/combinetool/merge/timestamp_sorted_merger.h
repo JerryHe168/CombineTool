@@ -1,7 +1,6 @@
 #pragma once
 
 #include "combinetool/merge/merger.h"
-#include "combinetool/filter/filter.h"
 #include "combinetool/utils/timestamp_extractor.h"
 #include "combinetool/io/smart_file_reader.h"
 
@@ -34,8 +33,6 @@ public:
 
 private:
     size_t m_maxMemoryEntries;
-    std::unique_ptr<filter::Filter> m_filter;
-    std::unique_ptr<filter::Deduplicator> m_deduplicator;
     std::unique_ptr<utils::TimestampExtractor> m_extractor;
     std::unique_ptr<std::ofstream> m_outputStream;
     

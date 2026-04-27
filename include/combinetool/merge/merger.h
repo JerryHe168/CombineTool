@@ -34,9 +34,15 @@ protected:
     
     std::function<void(size_t, size_t, const std::string&)> m_progressCallback;
     
+    std::unique_ptr<filter::Filter> m_filter;
+    std::unique_ptr<filter::Deduplicator> m_deduplicator;
+    
     virtual bool processLine(const LineData& line);
     virtual bool shouldFilter(const LineData& line);
+    virtual bool shouldKeep(const LineData& line);
+    virtual bool isDuplicate(const LineData& line);
     
+    void initializeFilterAndDeduplicator();
     void updateProgress(size_t current, size_t total, const std::string& file);
 };
 

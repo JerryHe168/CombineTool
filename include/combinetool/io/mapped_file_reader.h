@@ -62,6 +62,7 @@ public:
     const char* getChunkData() const;
     size_t getChunkSizeMapped() const;
     uint64_t getChunkOffset() const;
+    uint64_t getCurrentOffset() const;
     bool isAtEndOfFile() const;
     
     bool readBytes(char* buffer, size_t bufferSize, size_t& bytesRead);
