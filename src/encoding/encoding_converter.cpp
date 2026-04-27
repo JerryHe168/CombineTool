@@ -658,57 +658,188 @@ private:
     bool m_valid = true;
 };
 
-bool convertGBKToUTF32(uint16_t gbkCode, char32_t& result) {
-    char inBuf[3] = {0};
-    inBuf[0] = static_cast<char>(gbkCode >> 8);
-    inBuf[1] = static_cast<char>(gbkCode & 0xFF);
-    
-    IconvWrapper conv("UTF-32LE", "GBK");
+bool tryConvertWithEncoding(const std::string& fromCode, const std::string& toCode,
+                             const char* inData, size_t inSize,
+                             char* outData, size_t outSize,
+                             size_t& bytesWritten) {
+    IconvWrapper conv(toCode.c_str(), fromCode.c_str());
     if (!conv.isValid()) {
         return false;
     }
     
-    char32_t outChar = 0;
-    char* inPtr = inBuf;
-    char* outPtr = reinterpret_cast<char*>(&outChar);
-    size_t inLeft = 2;
-    size_t outLeft = sizeof(char32_t);
+    char* inPtr = const_cast<char*>(inData);
+    char* outPtr = outData;
+    size_t inLeft = inSize;
+    size_t outLeft = outSize;
     
     size_t res = conv.convert(&inPtr, &inLeft, &outPtr, &outLeft);
     if (res == static_cast<size_t>(-1)) {
         return false;
     }
     
-    result = outChar;
+    bytesWritten = outSize - outLeft;
     return true;
 }
 
+bool convertGBKToUTF8(const std::string& gbkStr, std::string& utf8Str) {
+    std::vector<char> outBuf(gbkStr.size() * 4);
+    size_t bytesWritten = 0;
+    
+    static const char* gbkEncodings[] = {"GBK", "CP936", "GB2312", "GB18030", nullptr};
+    for (int i = 0; gbkEncodings[i] != nullptr; ++i) {
+        if (tryConvertWithEncoding(gbkEncodings[i], "UTF-8",
+                                    gbkStr.data(), gbkStr.size(),
+                                    outBuf.data(), outBuf.size(),
+                                    bytesWritten)) {
+            utf8Str.assign(outBuf.data(), bytesWritten);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool convertUTF8ToGBK(const std::string& utf8Str, std::string& gbkStr) {
+    std::vector<char> outBuf(utf8Str.size() * 2);
+    size_t bytesWritten = 0;
+    
+    static const char* gbkEncodings[] = {"GBK", "CP936", "GB2312", "GB18030", nullptr};
+    for (int i = 0; gbkEncodings[i] != nullptr; ++i) {
+        if (tryConvertWithEncoding("UTF-8", gbkEncodings[i],
+                                    utf8Str.data(), utf8Str.size(),
+                                    outBuf.data(), outBuf.size(),
+                                    bytesWritten)) {
+            gbkStr.assign(outBuf.data(), bytesWritten);
+            return true;
+        }
+    }
+    return false;
+}
+
+size_t utf8CharLength(uint8_t firstByte) {
+    if ((firstByte & 0x80) == 0) return 1;
+    if ((firstByte & 0xE0) == 0xC0) return 2;
+    if ((firstByte & 0xF0) == 0xE0) return 3;
+    if ((firstByte & 0xF8) == 0xF0) return 4;
+    return 1;
+}
+
+bool decodeUtf8SingleChar(const std::string& utf8Str, char32_t& result) {
+    if (utf8Str.empty()) {
+        return false;
+    }
+    
+    const uint8_t* buffer = reinterpret_cast<const uint8_t*>(utf8Str.data());
+    size_t length = utf8Str.size();
+    uint8_t first = buffer[0];
+    size_t charLen = utf8CharLength(first);
+    
+    if (charLen > length) {
+        return false;
+    }
+    
+    switch (charLen) {
+        case 1:
+            result = first;
+            return true;
+        case 2:
+            if ((buffer[1] & 0xC0) != 0x80) return false;
+            result = ((first & 0x1F) << 6) | (buffer[1] & 0x3F);
+            return result >= 0x80;
+        case 3:
+            if ((buffer[1] & 0xC0) != 0x80 || (buffer[2] & 0xC0) != 0x80) return false;
+            result = ((first & 0x0F) << 12) | 
+                     ((buffer[1] & 0x3F) << 6) | 
+                     (buffer[2] & 0x3F);
+            if (result < 0x800 || (result >= 0xD800 && result <= 0xDFFF)) return false;
+            return true;
+        case 4:
+            if ((buffer[1] & 0xC0) != 0x80 || 
+                (buffer[2] & 0xC0) != 0x80 || 
+                (buffer[3] & 0xC0) != 0x80) return false;
+            result = ((first & 0x07) << 18) | 
+                     ((buffer[1] & 0x3F) << 12) | 
+                     ((buffer[2] & 0x3F) << 6) | 
+                     (buffer[3] & 0x3F);
+            if (result < 0x10000 || result > 0x10FFFF) return false;
+            return true;
+        default:
+            return false;
+    }
+}
+
+size_t encodeUtf8SingleChar(char32_t codepoint, std::string& result) {
+    result.clear();
+    
+    if (codepoint < 0x80) {
+        result = static_cast<char>(codepoint);
+        return 1;
+    }
+    
+    if (codepoint < 0x800) {
+        result = static_cast<char>(0xC0 | (codepoint >> 6));
+        result += static_cast<char>(0x80 | (codepoint & 0x3F));
+        return 2;
+    }
+    
+    if (codepoint < 0x10000) {
+        if (codepoint >= 0xD800 && codepoint <= 0xDFFF) {
+            return 0;
+        }
+        result = static_cast<char>(0xE0 | (codepoint >> 12));
+        result += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+        result += static_cast<char>(0x80 | (codepoint & 0x3F));
+        return 3;
+    }
+    
+    if (codepoint <= 0x10FFFF) {
+        result = static_cast<char>(0xF0 | (codepoint >> 18));
+        result += static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F));
+        result += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+        result += static_cast<char>(0x80 | (codepoint & 0x3F));
+        return 4;
+    }
+    
+    return 0;
+}
+
+bool convertGBKToUTF32(uint16_t gbkCode, char32_t& result) {
+    std::string gbkStr;
+    if (gbkCode < 0x100) {
+        gbkStr = static_cast<char>(gbkCode);
+    } else {
+        gbkStr = static_cast<char>(gbkCode >> 8);
+        gbkStr += static_cast<char>(gbkCode & 0xFF);
+    }
+    
+    std::string utf8Str;
+    if (!convertGBKToUTF8(gbkStr, utf8Str)) {
+        return false;
+    }
+    
+    return decodeUtf8SingleChar(utf8Str, result);
+}
+
 bool convertUTF32ToGBK(char32_t codepoint, uint16_t& result) {
-    IconvWrapper conv("GBK", "UTF-32LE");
-    if (!conv.isValid()) {
+    std::string utf8Str;
+    if (encodeUtf8SingleChar(codepoint, utf8Str) == 0) {
         return false;
     }
     
-    char inBuf[sizeof(char32_t)] = {0};
-    std::memcpy(inBuf, &codepoint, sizeof(char32_t));
-    
-    char outBuf[3] = {0};
-    char* inPtr = inBuf;
-    char* outPtr = outBuf;
-    size_t inLeft = sizeof(char32_t);
-    size_t outLeft = 3;
-    
-    size_t res = conv.convert(&inPtr, &inLeft, &outPtr, &outLeft);
-    if (res == static_cast<size_t>(-1)) {
+    std::string gbkStr;
+    if (!convertUTF8ToGBK(utf8Str, gbkStr)) {
         return false;
     }
     
-    size_t bytesUsed = 3 - outLeft;
-    if (bytesUsed == 2) {
-        result = (static_cast<uint8_t>(outBuf[0]) << 8) | static_cast<uint8_t>(outBuf[1]);
-        return true;
-    } else if (bytesUsed == 1 && static_cast<uint8_t>(outBuf[0]) < 0x80) {
-        result = static_cast<uint8_t>(outBuf[0]);
+    if (gbkStr.size() == 1) {
+        uint8_t byte = static_cast<uint8_t>(gbkStr[0]);
+        if (byte < 0x80) {
+            result = byte;
+            return true;
+        }
+    } else if (gbkStr.size() == 2) {
+        uint8_t b1 = static_cast<uint8_t>(gbkStr[0]);
+        uint8_t b2 = static_cast<uint8_t>(gbkStr[1]);
+        result = (static_cast<uint16_t>(b1) << 8) | b2;
         return true;
     }
     
