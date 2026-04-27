@@ -17,18 +17,6 @@ TimestampSortedMerger::TimestampSortedMerger(const MergeConfig& config)
     : Merger(config)
     , m_maxMemoryEntries(1000000)
 {
-    if (config.filterConfig.mode != FilterMode::Exclude || 
-        !config.filterConfig.includePatterns.empty() ||
-        !config.filterConfig.excludePatterns.empty() ||
-        config.filterConfig.filterBlankLines ||
-        config.filterConfig.filterCommentLines) {
-        m_filter = std::make_unique<filter::Filter>(config.filterConfig);
-    }
-    
-    if (config.deduplicationConfig.mode != DeduplicationMode::None) {
-        m_deduplicator = std::make_unique<filter::Deduplicator>(config.deduplicationConfig);
-    }
-    
     m_extractor = std::make_unique<utils::TimestampExtractor>(config.timestampConfig);
 }
 
@@ -297,16 +285,12 @@ bool TimestampSortedMerger::processAndWriteEntry(const utils::LogLineEntry& entr
     
     processLine(lineData);
     
-    if (m_filter) {
-        if (!m_filter->shouldKeep(lineData)) {
-            return true;
-        }
+    if (!shouldKeep(lineData)) {
+        return true;
     }
     
-    if (m_deduplicator) {
-        if (m_deduplicator->isDuplicate(lineData)) {
-            return true;
-        }
+    if (isDuplicate(lineData)) {
+        return true;
     }
     
     return writeLine(processedLine);

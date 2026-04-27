@@ -1,7 +1,6 @@
 #pragma once
 
 #include "combinetool/merge/merger.h"
-#include "combinetool/filter/filter.h"
 
 namespace combinetool {
 namespace merge {
@@ -14,9 +13,6 @@ public:
     bool merge() override;
 
 private:
-    std::unique_ptr<filter::Filter> m_filter;
-    std::unique_ptr<filter::Deduplicator> m_deduplicator;
-    
     bool processFile(const std::string& filePath, bool isFirstFile);
     bool writeLine(const std::string& line);
     

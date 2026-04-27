@@ -24,17 +24,6 @@ ConditionalMerger::ConditionalMerger(const MergeConfig& config)
     , m_joinKeyColumn(0)
     , m_joinType(JoinType::Inner)
 {
-    if (config.filterConfig.mode != FilterMode::Exclude || 
-        !config.filterConfig.includePatterns.empty() ||
-        !config.filterConfig.excludePatterns.empty() ||
-        config.filterConfig.filterBlankLines ||
-        config.filterConfig.filterCommentLines) {
-        m_filter = std::make_unique<filter::Filter>(config.filterConfig);
-    }
-    
-    if (config.deduplicationConfig.mode != DeduplicationMode::None) {
-        m_deduplicator = std::make_unique<filter::Deduplicator>(config.deduplicationConfig);
-    }
 }
 
 ConditionalMerger::~ConditionalMerger() = default;
@@ -324,11 +313,11 @@ bool ConditionalMerger::streamLeftTableAndJoin(
             );
             lineData.isValid = true;
             
-            if (m_filter && !m_filter->shouldKeep(lineData)) {
+            if (!shouldKeep(lineData)) {
                 continue;
             }
             
-            if (m_deduplicator && m_deduplicator->isDuplicate(lineData)) {
+            if (isDuplicate(lineData)) {
                 continue;
             }
             
@@ -351,11 +340,11 @@ bool ConditionalMerger::streamLeftTableAndJoin(
                 );
                 lineData.isValid = true;
                 
-                if (m_filter && !m_filter->shouldKeep(lineData)) {
+                if (!shouldKeep(lineData)) {
                     continue;
                 }
                 
-                if (m_deduplicator && m_deduplicator->isDuplicate(lineData)) {
+                if (isDuplicate(lineData)) {
                     continue;
                 }
                 
@@ -390,11 +379,11 @@ bool ConditionalMerger::streamLeftTableAndJoin(
                 );
                 lineData.isValid = true;
                 
-                if (m_filter && !m_filter->shouldKeep(lineData)) {
+                if (!shouldKeep(lineData)) {
                     continue;
                 }
                 
-                if (m_deduplicator && m_deduplicator->isDuplicate(lineData)) {
+                if (isDuplicate(lineData)) {
                     continue;
                 }
                 

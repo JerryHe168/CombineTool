@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <regex>
 #include <ctime>
+#include <cmath>
 #include <stdexcept>
 
 namespace combinetool {

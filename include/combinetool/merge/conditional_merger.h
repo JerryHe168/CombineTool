@@ -1,7 +1,6 @@
 #pragma once
 
 #include "combinetool/merge/merger.h"
-#include "combinetool/filter/filter.h"
 #include "combinetool/io/smart_file_reader.h"
 
 #include <map>
@@ -36,9 +35,6 @@ private:
     int m_joinKeyColumn;
     std::string m_joinKeyColumnName;
     JoinType m_joinType;
-    
-    std::unique_ptr<filter::Filter> m_filter;
-    std::unique_ptr<filter::Deduplicator> m_deduplicator;
     
     struct FileInfo {
         std::string filePath;

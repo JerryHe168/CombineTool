@@ -68,6 +68,11 @@ target_include_directories(combine-tool
 
 if(WIN32)
     target_link_libraries(combine-tool PRIVATE shlwapi)
+else()
+    find_library(ICONV_LIBRARY iconv)
+    if(ICONV_LIBRARY)
+        target_link_libraries(combine-tool PRIVATE ${ICONV_LIBRARY})
+    endif()
 endif()
 
 if(UNIX AND NOT APPLE)

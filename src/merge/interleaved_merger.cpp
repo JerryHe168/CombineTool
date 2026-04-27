@@ -16,17 +16,6 @@ InterleavedMerger::InterleavedMerger(const MergeConfig& config)
     : Merger(config)
     , m_linesPerChunk(1)
 {
-    if (config.filterConfig.mode != FilterMode::Exclude || 
-        !config.filterConfig.includePatterns.empty() ||
-        !config.filterConfig.excludePatterns.empty() ||
-        config.filterConfig.filterBlankLines ||
-        config.filterConfig.filterCommentLines) {
-        m_filter = std::make_unique<filter::Filter>(config.filterConfig);
-    }
-    
-    if (config.deduplicationConfig.mode != DeduplicationMode::None) {
-        m_deduplicator = std::make_unique<filter::Deduplicator>(config.deduplicationConfig);
-    }
 }
 
 InterleavedMerger::~InterleavedMerger() {
@@ -94,16 +83,12 @@ bool InterleavedMerger::merge() {
                 
                 processLine(lineData);
                 
-                if (m_filter) {
-                    if (!m_filter->shouldKeep(lineData)) {
-                        continue;
-                    }
+                if (!shouldKeep(lineData)) {
+                    continue;
                 }
                 
-                if (m_deduplicator) {
-                    if (m_deduplicator->isDuplicate(lineData)) {
-                        continue;
-                    }
+                if (isDuplicate(lineData)) {
+                    continue;
                 }
                 
                 if (!writeLine(line)) {

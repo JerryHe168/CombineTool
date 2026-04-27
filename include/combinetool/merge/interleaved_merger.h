@@ -1,7 +1,6 @@
 #pragma once
 
 #include "combinetool/merge/merger.h"
-#include "combinetool/filter/filter.h"
 
 namespace combinetool {
 namespace merge {
@@ -18,8 +17,6 @@ public:
 
 private:
     size_t m_linesPerChunk;
-    std::unique_ptr<filter::Filter> m_filter;
-    std::unique_ptr<filter::Deduplicator> m_deduplicator;
     
     struct FileReaderState {
         std::unique_ptr<std::ifstream> stream;

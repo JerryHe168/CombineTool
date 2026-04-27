@@ -4,9 +4,14 @@
 
 #include <algorithm>
 #include <cstring>
+#include <stdexcept>
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <iconv.h>
+#include <cerrno>
+#include <clocale>
 #endif
 
 namespace combinetool {
@@ -623,7 +628,93 @@ bool EncodingConverter::isGBKCodepoint(char32_t codepoint) {
 }
 
 namespace {
+#ifdef _WIN32
 constexpr UINT CP_GBK = 936;
+#else
+class IconvWrapper {
+public:
+    IconvWrapper(const char* toCode, const char* fromCode) {
+        m_handle = iconv_open(toCode, fromCode);
+        if (m_handle == reinterpret_cast<iconv_t>(-1)) {
+            m_valid = false;
+        }
+    }
+    
+    ~IconvWrapper() {
+        if (m_valid) {
+            iconv_close(m_handle);
+        }
+    }
+    
+    bool isValid() const { return m_valid; }
+    
+    size_t convert(char** inBuf, size_t* inBytesLeft,
+                   char** outBuf, size_t* outBytesLeft) {
+        return iconv(m_handle, inBuf, inBytesLeft, outBuf, outBytesLeft);
+    }
+    
+private:
+    iconv_t m_handle;
+    bool m_valid = true;
+};
+
+bool convertGBKToUTF32(uint16_t gbkCode, char32_t& result) {
+    char inBuf[3] = {0};
+    inBuf[0] = static_cast<char>(gbkCode >> 8);
+    inBuf[1] = static_cast<char>(gbkCode & 0xFF);
+    
+    IconvWrapper conv("UTF-32LE", "GBK");
+    if (!conv.isValid()) {
+        return false;
+    }
+    
+    char32_t outChar = 0;
+    char* inPtr = inBuf;
+    char* outPtr = reinterpret_cast<char*>(&outChar);
+    size_t inLeft = 2;
+    size_t outLeft = sizeof(char32_t);
+    
+    size_t res = conv.convert(&inPtr, &inLeft, &outPtr, &outLeft);
+    if (res == static_cast<size_t>(-1)) {
+        return false;
+    }
+    
+    result = outChar;
+    return true;
+}
+
+bool convertUTF32ToGBK(char32_t codepoint, uint16_t& result) {
+    IconvWrapper conv("GBK", "UTF-32LE");
+    if (!conv.isValid()) {
+        return false;
+    }
+    
+    char inBuf[sizeof(char32_t)] = {0};
+    std::memcpy(inBuf, &codepoint, sizeof(char32_t));
+    
+    char outBuf[3] = {0};
+    char* inPtr = inBuf;
+    char* outPtr = outBuf;
+    size_t inLeft = sizeof(char32_t);
+    size_t outLeft = 3;
+    
+    size_t res = conv.convert(&inPtr, &inLeft, &outPtr, &outLeft);
+    if (res == static_cast<size_t>(-1)) {
+        return false;
+    }
+    
+    size_t bytesUsed = 3 - outLeft;
+    if (bytesUsed == 2) {
+        result = (static_cast<uint8_t>(outBuf[0]) << 8) | static_cast<uint8_t>(outBuf[1]);
+        return true;
+    } else if (bytesUsed == 1 && static_cast<uint8_t>(outBuf[0]) < 0x80) {
+        result = static_cast<uint8_t>(outBuf[0]);
+        return true;
+    }
+    
+    return false;
+}
+#endif
 }
 
 char32_t EncodingConverter::gbkToUnicode(uint16_t gbkCode) {
@@ -637,6 +728,11 @@ char32_t EncodingConverter::gbkToUnicode(uint16_t gbkCode) {
     int result = MultiByteToWideChar(CP_GBK, 0, mb, 2, &wc, 1);
     if (result > 0) {
         return static_cast<char32_t>(wc);
+    }
+#else
+    char32_t result = 0;
+    if (convertGBKToUTF32(gbkCode, result)) {
+        return result;
     }
 #endif
     
@@ -654,6 +750,11 @@ uint16_t EncodingConverter::unicodeToGBK(char32_t codepoint) {
     int result = WideCharToMultiByte(CP_GBK, 0, &wc, 1, mb, 3, nullptr, nullptr);
     if (result == 2) {
         return (static_cast<uint8_t>(mb[0]) << 8) | static_cast<uint8_t>(mb[1]);
+    }
+#else
+    uint16_t result = 0;
+    if (convertUTF32ToGBK(codepoint, result)) {
+        return result;
     }
 #endif
     

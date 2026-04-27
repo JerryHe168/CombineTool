@@ -11,6 +11,21 @@ Merger::Merger(const MergeConfig& config)
     , m_totalLinesWritten(0)
     , m_filesProcessed(0)
 {
+    initializeFilterAndDeduplicator();
+}
+
+void Merger::initializeFilterAndDeduplicator() {
+    if (m_config.filterConfig.mode != FilterMode::Exclude || 
+        !m_config.filterConfig.includePatterns.empty() ||
+        !m_config.filterConfig.excludePatterns.empty() ||
+        m_config.filterConfig.filterBlankLines ||
+        m_config.filterConfig.filterCommentLines) {
+        m_filter = std::make_unique<filter::Filter>(m_config.filterConfig);
+    }
+    
+    if (m_config.deduplicationConfig.mode != DeduplicationMode::None) {
+        m_deduplicator = std::make_unique<filter::Deduplicator>(m_config.deduplicationConfig);
+    }
 }
 
 size_t Merger::getTotalLinesProcessed() const {
@@ -37,6 +52,20 @@ bool Merger::processLine(const LineData& line) {
 }
 
 bool Merger::shouldFilter(const LineData& line) {
+    return false;
+}
+
+bool Merger::shouldKeep(const LineData& line) {
+    if (m_filter) {
+        return m_filter->shouldKeep(line);
+    }
+    return true;
+}
+
+bool Merger::isDuplicate(const LineData& line) {
+    if (m_deduplicator) {
+        return m_deduplicator->isDuplicate(line);
+    }
     return false;
 }
 
