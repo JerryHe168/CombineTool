@@ -34,15 +34,27 @@ bool SequentialMerger::merge() {
     m_totalLinesWritten = 0;
     m_filesProcessed = 0;
     
+    std::vector<FileHeaderInfo> headerInfos;
+    if (!collectAllHeaders(headerInfos)) {
+        return false;
+    }
+    
+    if (!verifyHeaderConsistency(headerInfos)) {
+        return false;
+    }
+    
+    if (!writeUnifiedHeader(headerInfos)) {
+        return false;
+    }
+    
     size_t totalFiles = m_config.inputFiles.size();
     
     for (size_t i = 0; i < m_config.inputFiles.size(); ++i) {
         const auto& filePath = m_config.inputFiles[i];
-        bool isFirstFile = (i == 0);
         
         updateProgress(m_filesProcessed, totalFiles, filePath);
         
-        if (!processFile(filePath, isFirstFile)) {
+        if (!processFile(filePath)) {
             return false;
         }
         
@@ -56,7 +68,119 @@ bool SequentialMerger::merge() {
     return true;
 }
 
-bool SequentialMerger::processFile(const std::string& filePath, bool isFirstFile) {
+bool SequentialMerger::collectAllHeaders(std::vector<FileHeaderInfo>& headerInfos) {
+    headerInfos.clear();
+    
+    for (const auto& filePath : m_config.inputFiles) {
+        if (!utils::PathUtils::isFile(filePath)) {
+            continue;
+        }
+        
+        FileHeaderInfo info;
+        info.filePath = filePath;
+        info.hasHeader = false;
+        
+        auto formatResult = format::FormatDetector::detectFromFile(filePath);
+        info.hasHeader = formatResult.hasHeader;
+        
+        if (info.hasHeader && !formatResult.headerColumns.empty()) {
+            info.headerColumns = formatResult.headerColumns;
+        }
+        
+        if (info.hasHeader) {
+            auto stream = utils::FileUtils::openForRead(filePath, true);
+            if (stream) {
+                std::string line;
+                if (utils::FileUtils::readLine(*stream, line)) {
+                    info.headerLine = line;
+                }
+            }
+        }
+        
+        headerInfos.push_back(info);
+    }
+    
+    return true;
+}
+
+bool SequentialMerger::verifyHeaderConsistency(const std::vector<FileHeaderInfo>& headerInfos) {
+    if (headerInfos.empty()) {
+        return true;
+    }
+    
+    bool firstHasHeader = headerInfos[0].hasHeader;
+    const std::vector<std::string>& firstColumns = headerInfos[0].headerColumns;
+    
+    for (size_t i = 1; i < headerInfos.size(); ++i) {
+        const auto& info = headerInfos[i];
+        
+        if (info.hasHeader != firstHasHeader) {
+            std::cerr << "Warning: File " << info.filePath 
+                      << " has inconsistent header presence compared to first file" << std::endl;
+            continue;
+        }
+        
+        if (info.hasHeader && firstHasHeader) {
+            if (info.headerColumns.size() != firstColumns.size()) {
+                std::cerr << "Warning: File " << info.filePath 
+                          << " has different column count (" << info.headerColumns.size() 
+                          << ") than first file (" << firstColumns.size() << ")" << std::endl;
+                continue;
+            }
+            
+            bool columnsMatch = true;
+            for (size_t j = 0; j < info.headerColumns.size(); ++j) {
+                if (info.headerColumns[j] != firstColumns[j]) {
+                    columnsMatch = false;
+                    break;
+                }
+            }
+            
+            if (!columnsMatch) {
+                std::cerr << "Warning: File " << info.filePath 
+                          << " has different column names than first file" << std::endl;
+            }
+        }
+    }
+    
+    return true;
+}
+
+bool SequentialMerger::writeUnifiedHeader(const std::vector<FileHeaderInfo>& headerInfos) {
+    if (!m_config.outputHeader || headerInfos.empty()) {
+        return true;
+    }
+    
+    const auto& firstInfo = headerInfos[0];
+    if (!firstInfo.hasHeader || firstInfo.headerLine.empty()) {
+        return true;
+    }
+    
+    auto encodingResult = encoding::EncodingDetector::detectFromFile(firstInfo.filePath);
+    bool needConversion = encodingResult.encoding != m_config.targetEncoding;
+    
+    std::string headerToWrite = firstInfo.headerLine;
+    
+    if (needConversion) {
+        auto converted = encoding::EncodingConverter::convert(
+            headerToWrite + "\n", 
+            encodingResult.encoding, 
+            m_config.targetEncoding,
+            false
+        );
+        if (converted.success) {
+            headerToWrite = converted.output;
+        }
+    }
+    
+    if (!writeLine(headerToWrite)) {
+        return false;
+    }
+    
+    return true;
+}
+
+bool SequentialMerger::processFile(const std::string& filePath) {
     if (!utils::PathUtils::isFile(filePath)) {
         return false;
     }
@@ -73,30 +197,12 @@ bool SequentialMerger::processFile(const std::string& filePath, bool isFirstFile
     }
     
     size_t lineNumber = 0;
-    bool headerSkipped = false;
     std::string line;
     
     while (utils::FileUtils::readLine(*stream, line)) {
         lineNumber++;
         
         if (formatResult.hasHeader && lineNumber == 1) {
-            if (isFirstFile && m_config.outputHeader) {
-                if (needConversion) {
-                    auto converted = encoding::EncodingConverter::convert(
-                        line + "\n", 
-                        encodingResult.encoding, 
-                        m_config.targetEncoding,
-                        false
-                    );
-                    if (converted.success) {
-                        line = converted.output;
-                    }
-                }
-                if (!writeLine(line)) {
-                    return false;
-                }
-            }
-            headerSkipped = true;
             continue;
         }
         
