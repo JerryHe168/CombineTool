@@ -34,10 +34,17 @@ void ArgumentParser::addArgument(
     arg.name = longName;
     arg.shortName = shortName;
     arg.description = description;
-    arg.hasValue = hasValue;
+    
+    if (isFlag && hasValue) {
+        arg.isFlag = true;
+        arg.hasValue = false;
+    } else {
+        arg.isFlag = isFlag;
+        arg.hasValue = hasValue;
+    }
+    
     arg.isRequired = isRequired;
     arg.defaultValue = defaultValue;
-    arg.isFlag = isFlag;
     
     m_arguments.push_back(arg);
 }
