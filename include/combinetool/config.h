@@ -18,6 +18,9 @@ constexpr size_t FORMAT_DETECTION_SAMPLE_SIZE = 100 * 1024;
 constexpr size_t ENCODING_DETECTION_SAMPLE_SIZE = 64 * 1024;
 constexpr size_t HEADER_DETECTION_LINES = 10;
 
+constexpr size_t ESTIMATE_LINE_COUNT_SAMPLE_LINES = 10;
+constexpr size_t ESTIMATE_LINE_COUNT_DEFAULT_BYTES_PER_LINE = 100;
+
 constexpr const char* DEFAULT_DELIMITER = ",";
 constexpr const char* DEFAULT_COMMENT_PREFIX = "#";
 

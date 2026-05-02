@@ -317,12 +317,53 @@ bool TimestampSortedMerger::shouldUseExternalMerge() const {
 
 uint64_t TimestampSortedMerger::estimateTotalLines() const {
     uint64_t totalBytes = 0;
+    uint64_t totalSampleLines = 0;
+    uint64_t totalSampleBytes = 0;
     
     for (const auto& filePath : m_config.inputFiles) {
-        totalBytes += utils::PathUtils::getFileSize(filePath);
+        uint64_t fileSize = utils::PathUtils::getFileSize(filePath);
+        totalBytes += fileSize;
+        
+        if (fileSize == 0) {
+            continue;
+        }
+        
+        auto stream = utils::FileUtils::openForRead(filePath, true);
+        if (!stream) {
+            continue;
+        }
+        
+        std::string line;
+        size_t linesRead = 0;
+        size_t bytesFromLines = 0;
+        
+        auto formatResult = format::FormatDetector::detectFromFile(filePath);
+        
+        while (linesRead < config::ESTIMATE_LINE_COUNT_SAMPLE_LINES && 
+               utils::FileUtils::readLine(*stream, line)) {
+            if (formatResult.hasHeader && linesRead == 0) {
+                linesRead++;
+                continue;
+            }
+            
+            bytesFromLines += line.size() + 1;
+            linesRead++;
+        }
+        
+        if (linesRead > 0) {
+            totalSampleLines += linesRead;
+            totalSampleBytes += bytesFromLines;
+        }
     }
     
-    return totalBytes / 100;
+    if (totalSampleLines > 0 && totalSampleBytes > 0) {
+        size_t avgBytesPerLine = static_cast<size_t>(totalSampleBytes / totalSampleLines);
+        if (avgBytesPerLine > 0) {
+            return totalBytes / avgBytesPerLine;
+        }
+    }
+    
+    return totalBytes / config::ESTIMATE_LINE_COUNT_DEFAULT_BYTES_PER_LINE;
 }
 
 }
