@@ -468,24 +468,74 @@ bool PathUtils::isAbsolutePath(const std::string& path) {
 }
 
 std::string PathUtils::normalizePath(const std::string& path) {
+    if (path.empty()) {
+        return "";
+    }
+    
     char sep = getDirectorySeparator();
-    std::string result;
-    result.reserve(path.size());
+    
+#ifdef _WIN32
+    bool isUNC = false;
+    std::string uncPrefix;
+    bool isDrive = false;
+    std::string drivePrefix;
+    
+    if (path.size() >= 2 && (path[0] == '\\' || path[0] == '/') && 
+                            (path[1] == '\\' || path[1] == '/')) {
+        isUNC = true;
+        uncPrefix = "\\\\";
+        
+        size_t serverEnd = path.find_first_of("\\/", 2);
+        if (serverEnd != std::string::npos) {
+            size_t shareEnd = path.find_first_of("\\/", serverEnd + 1);
+            if (shareEnd != std::string::npos) {
+                uncPrefix = path.substr(0, shareEnd);
+            } else {
+                uncPrefix = path.substr(0, serverEnd);
+            }
+        } else {
+            uncPrefix = path;
+        }
+    } else if (path.size() >= 2 && path[1] == ':') {
+        isDrive = true;
+        drivePrefix = path.substr(0, 2);
+        if (path.size() > 2 && (path[2] == '\\' || path[2] == '/')) {
+            drivePrefix += sep;
+        }
+    }
+#endif
+    
+    size_t startPos = 0;
+#ifdef _WIN32
+    if (isUNC) {
+        startPos = uncPrefix.size();
+    } else if (isDrive) {
+        startPos = drivePrefix.size();
+    }
+#endif
+    
+    std::string tempPath;
+    tempPath.reserve(path.size());
     
     char lastChar = 0;
-    for (char ch : path) {
+    for (size_t i = startPos; i < path.size(); ++i) {
+        char ch = path[i];
         if (ch == '/' || ch == '\\') {
-            if (lastChar != '/' && lastChar != '\\' && lastChar != 0) {
-                result += sep;
+            if (lastChar != '/' && lastChar != '\\') {
+                tempPath += sep;
             }
             lastChar = ch;
         } else {
-            result += ch;
+            tempPath += ch;
             lastChar = ch;
         }
     }
     
-    std::vector<std::string> parts = StringUtils::split(result, std::string(1, sep), true);
+    std::vector<std::string> parts;
+    if (!tempPath.empty()) {
+        parts = StringUtils::split(tempPath, std::string(1, sep), true);
+    }
+    
     std::vector<std::string> normalizedParts;
     
     for (const auto& part : parts) {
@@ -501,6 +551,32 @@ std::string PathUtils::normalizePath(const std::string& path) {
             normalizedParts.push_back(part);
         }
     }
+    
+    std::string result;
+    
+#ifdef _WIN32
+    if (isUNC) {
+        result = uncPrefix;
+        if (!normalizedParts.empty()) {
+            if (!StringUtils::endsWith(result, std::string(1, sep))) {
+                result += sep;
+            }
+            result += StringUtils::join(normalizedParts, std::string(1, sep));
+        }
+        return result;
+    }
+    
+    if (isDrive) {
+        result = drivePrefix;
+        if (!normalizedParts.empty()) {
+            if (!StringUtils::endsWith(result, std::string(1, sep))) {
+                result += sep;
+            }
+            result += StringUtils::join(normalizedParts, std::string(1, sep));
+        }
+        return result;
+    }
+#endif
     
     if (normalizedParts.empty()) {
         return std::string(1, sep);

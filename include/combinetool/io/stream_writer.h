@@ -13,7 +13,7 @@ namespace io {
 
 struct WriteResult {
     bool success;
-    size_t bytesWritten;
+    uint64_t bytesWritten;
     std::string errorMessage;
 };
 

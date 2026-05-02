@@ -30,6 +30,12 @@ public:
     explicit BinaryMerger(const MergeConfig& config);
     ~BinaryMerger() override;
     
+    BinaryMerger(BinaryMerger&&) noexcept = default;
+    BinaryMerger& operator=(BinaryMerger&&) noexcept = default;
+    
+    BinaryMerger(const BinaryMerger&) = delete;
+    BinaryMerger& operator=(const BinaryMerger&) = delete;
+    
     bool merge() override;
     
     void setChunkSize(size_t chunkSize);

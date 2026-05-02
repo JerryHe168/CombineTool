@@ -10,6 +10,20 @@ namespace combinetool {
 namespace filter {
 
 namespace {
+template <typename T>
+void hashCombine(size_t& seed, const T& val) {
+    std::hash<T> hasher;
+    seed ^= hasher(val) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+}
+
+template <typename T>
+void hashCombineVector(size_t& seed, const std::vector<T>& vec, size_t separator) {
+    for (const auto& item : vec) {
+        hashCombine(seed, item);
+    }
+    hashCombine(seed, separator);
+}
+
 std::string wildCardToRegex(const std::string& pattern) {
     std::string regex;
     regex.reserve(pattern.size() * 2);
@@ -94,21 +108,9 @@ bool RegexCache::CacheKey::operator==(const CacheKey& other) const {
 size_t RegexCache::CacheKeyHash::operator()(const CacheKey& key) const {
     size_t hash = 0;
     
-    for (const auto& s : key.includePatterns) {
-        for (char c : s) {
-            hash = hash * 31 + static_cast<size_t>(c);
-        }
-        hash = hash * 31 + 271828;
-    }
-    
-    for (const auto& s : key.excludePatterns) {
-        for (char c : s) {
-            hash = hash * 31 + static_cast<size_t>(c);
-        }
-        hash = hash * 31 + 314159;
-    }
-    
-    hash = hash * 31 + (key.caseSensitive ? 1 : 0);
+    hashCombineVector(hash, key.includePatterns, static_cast<size_t>(271828));
+    hashCombineVector(hash, key.excludePatterns, static_cast<size_t>(314159));
+    hashCombine(hash, key.caseSensitive);
     
     return hash;
 }

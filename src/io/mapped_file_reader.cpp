@@ -140,7 +140,8 @@ bool MappedFileReader::unmap() {
     }
 #else
     if (m_mappedData != MAP_FAILED) {
-        munmap(m_mappedData, static_cast<size_t>(m_fileSize));
+        size_t mappedSize = m_isChunkedMode ? m_currentChunkSize : static_cast<size_t>(m_fileSize);
+        munmap(m_mappedData, mappedSize);
         m_mappedData = MAP_FAILED;
     }
 #endif
@@ -446,8 +447,8 @@ bool MappedFileReader::mapChunk(uint64_t offset) {
         m_fileHandle,
         NULL,
         PAGE_READONLY,
-        static_cast<DWORD>(alignedOffset >> 32),
-        static_cast<DWORD>(alignedOffset & 0xFFFFFFFF),
+        0,
+        0,
         NULL
     );
     
